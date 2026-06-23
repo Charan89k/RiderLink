@@ -13,6 +13,11 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import android.view.KeyEvent
+import android.media.AudioManager
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
+import android.speech.tts.TextToSpeech
 import androidx.core.app.NotificationCompat
 import com.example.riderlink.MainActivity
 import com.example.riderlink.audio.BluetoothAudioRouter
@@ -26,8 +31,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.Locale
 
-class IntercomService : Service() {
+class IntercomService : Service(), TextToSpeech.OnInitListener {
 
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
@@ -46,6 +52,27 @@ class IntercomService : Service() {
     val isAutoPauseEnabled = MutableStateFlow(false)
     val localTrack = MutableStateFlow<TrackInfo?>(null)
 
+    // Advanced features
+    private var mediaSession: MediaSession? = null
+    private var tts: TextToSpeech? = null
+    private var isTtsReady = false
+
+    private val _privateChatParticipant = MutableStateFlow<String?>(null)
+    val privateChatParticipant: StateFlow<String?> = _privateChatParticipant.asStateFlow()
+
+    private var privateChatParticipantIdentity: String? = null
+
+    private var originalMusicVolume: Int? = null
+    private lateinit var audioManager: AudioManager
+    private var maxMusicVolume: Int = 0
+
+    // Click counter engine variables
+    private var nextClickJob: kotlinx.coroutines.Job? = null
+    private var prevClickJob: kotlinx.coroutines.Job? = null
+    private var nextClickCount = 0
+    private var prevClickCount = 0
+    private var isDispatchingInternal = false
+
     inner class LocalBinder : Binder() {
         fun getService(): IntercomService = this@IntercomService
     }
@@ -55,6 +82,45 @@ class IntercomService : Service() {
         Log.d(TAG, "Creating IntercomService")
         audioRouter = BluetoothAudioRouter(this)
         intercomClient = LiveKitIntercomClient(this)
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+
+        // Initialize TTS
+        tts = TextToSpeech(this, this)
+
+        // Initialize and configure MediaSession
+        mediaSession = MediaSession(this, "RiderLinkIntercomSession").apply {
+            setCallback(object : MediaSession.Callback() {
+                override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
+                    val event = mediaButtonIntent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return false
+                    if (event.action != KeyEvent.ACTION_DOWN) {
+                        return super.onMediaButtonEvent(mediaButtonIntent)
+                    }
+                    val keyCode = event.keyCode
+                    Log.d(TAG, "Media button event intercepted: keyCode = $keyCode")
+                    
+                    if (isDispatchingInternal) {
+                        Log.d(TAG, "Passing through internally dispatched event")
+                        return false
+                    }
+                    
+                    if (keyCode == KeyEvent.KEYCODE_MEDIA_NEXT) {
+                        handleMediaNextClick()
+                        return true
+                    } else if (keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS) {
+                        handleMediaPreviousClick()
+                        return true
+                    }
+                    return super.onMediaButtonEvent(mediaButtonIntent)
+                }
+            })
+            val state = PlaybackState.Builder()
+                .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS)
+                .setState(PlaybackState.STATE_PLAYING, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1.0f)
+                .build()
+            setPlaybackState(state)
+            isActive = true
+        }
 
         val prefs = getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
         isAutoPauseEnabled.value = prefs.getBoolean("auto_pause", false)
@@ -78,6 +144,16 @@ class IntercomService : Service() {
                         audioRouter.requestAudioFocus(exclusive = true)
                     } else {
                         audioRouter.requestAudioFocus(exclusive = false)
+                    }
+                }
+            }
+            launch {
+                intercomClient.isRemoteSpeaking.collect { remoteSpeaking ->
+                    Log.d(TAG, "isRemoteSpeaking flow changed: $remoteSpeaking, autoPause=${isAutoPauseEnabled.value}")
+                    if (remoteSpeaking) {
+                        duckMusicVolume()
+                    } else {
+                        restoreMusicVolume()
                     }
                 }
             }
@@ -155,13 +231,20 @@ class IntercomService : Service() {
         Log.d(TAG, "Auto-Pause changed to $enabled. Current speaking state: $someoneSpeaking")
         if (someoneSpeaking && enabled) {
             audioRouter.requestAudioFocus(exclusive = true)
+            restoreMusicVolume()
         } else {
             audioRouter.requestAudioFocus(exclusive = false)
+            if (intercomClient.isRemoteSpeaking.value && !enabled) {
+                duckMusicVolume()
+            }
         }
     }
 
     fun disconnect() {
         intercomClient.disconnect()
+        privateChatParticipantIdentity = null
+        _privateChatParticipant.value = null
+        restoreMusicVolume()
         _roomCode.value = null
         audioRouter.stop()
         releaseWakeLock()
@@ -267,8 +350,155 @@ class IntercomService : Service() {
         intercomClient.disconnect()
         audioRouter.stop()
         releaseWakeLock()
+        
+        mediaSession?.isActive = false
+        mediaSession?.release()
+        mediaSession = null
+
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
+        isTtsReady = false
+
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    // TextToSpeech.OnInitListener
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            val result = tts?.setLanguage(Locale.US)
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                Log.e(TAG, "TTS Language is not supported or missing data")
+            } else {
+                isTtsReady = true
+                Log.d(TAG, "TTS Initialized successfully")
+            }
+        } else {
+            Log.e(TAG, "TTS Initialization failed")
+        }
+    }
+
+    private fun speakTts(text: String) {
+        Log.d(TAG, "speakTts: $text")
+        if (isTtsReady) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "RiderLinkTTS")
+            } else {
+                @Suppress("DEPRECATION")
+                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null)
+            }
+        } else {
+            Log.w(TAG, "TTS not ready yet")
+        }
+    }
+
+    private fun handleMediaNextClick() {
+        nextClickCount++
+        nextClickJob?.cancel()
+        if (nextClickCount >= 2) {
+            nextClickCount = 0
+            cyclePrivateChat()
+        } else {
+            nextClickJob = serviceScope.launch {
+                kotlinx.coroutines.delay(1200)
+                nextClickCount = 0
+                dispatchMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT)
+            }
+        }
+    }
+
+    private fun handleMediaPreviousClick() {
+        prevClickCount++
+        prevClickJob?.cancel()
+        if (prevClickCount >= 2) {
+            prevClickCount = 0
+            returnToGroupChat()
+        } else {
+            prevClickJob = serviceScope.launch {
+                kotlinx.coroutines.delay(1200)
+                prevClickCount = 0
+                dispatchMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+            }
+        }
+    }
+
+    private fun dispatchMediaKey(keyCode: Int) {
+        isDispatchingInternal = true
+        try {
+            Log.d(TAG, "dispatchMediaKey internal: $keyCode")
+            val down = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
+            val up = KeyEvent(KeyEvent.ACTION_UP, keyCode)
+            audioManager.dispatchMediaKeyEvent(down)
+            audioManager.dispatchMediaKeyEvent(up)
+        } finally {
+            serviceScope.launch {
+                kotlinx.coroutines.delay(200)
+                isDispatchingInternal = false
+            }
+        }
+    }
+
+    private fun cyclePrivateChat() {
+        val currentRoom = intercomClient.getRoom()
+        if (currentRoom == null) {
+            speakTts("Not connected to room")
+            return
+        }
+        val remoteParticipants = currentRoom.remoteParticipants.values.toList()
+        if (remoteParticipants.isEmpty()) {
+            speakTts("No riders available for private chat")
+            return
+        }
+        
+        val currentIndex = remoteParticipants.indexOfFirst { it.identity?.value == privateChatParticipantIdentity }
+        val nextIndex = (currentIndex + 1) % remoteParticipants.size
+        val nextParticipant = remoteParticipants[nextIndex]
+        val name = nextParticipant.identity?.value ?: "Rider"
+        
+        privateChatParticipantIdentity = name
+        _privateChatParticipant.value = name
+        
+        intercomClient.isolateParticipant(name)
+        speakTts("Private chat with $name")
+    }
+
+    private fun returnToGroupChat() {
+        if (privateChatParticipantIdentity == null) {
+            speakTts("Already in group intercom")
+            return
+        }
+        privateChatParticipantIdentity = null
+        _privateChatParticipant.value = null
+        intercomClient.resetPrivateChat()
+        speakTts("Returned to group intercom")
+    }
+
+    private fun duckMusicVolume() {
+        if (isAutoPauseEnabled.value) return
+        try {
+            val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            if (originalMusicVolume == null) {
+                originalMusicVolume = currentVolume
+                val ducked = (currentVolume * 0.20).toInt().coerceIn(1, maxMusicVolume)
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, ducked, 0)
+                Log.d(TAG, "Ducked STREAM_MUSIC volume from $currentVolume to $ducked")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error ducking volume", e)
+        }
+    }
+
+    private fun restoreMusicVolume() {
+        try {
+            originalMusicVolume?.let {
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, it, 0)
+                Log.d(TAG, "Restored STREAM_MUSIC volume to $it")
+                originalMusicVolume = null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error restoring volume", e)
+        }
     }
 
     companion object {

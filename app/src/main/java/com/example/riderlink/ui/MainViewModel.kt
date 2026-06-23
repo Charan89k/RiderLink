@@ -127,6 +127,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else flowOf(null)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    val activeSpeaker: StateFlow<String?> = _isServiceBound.flatMapLatest { bound ->
+        if (bound) intercomService?.intercomClient?.activeSpeaker ?: flowOf(null)
+        else flowOf(null)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val privateChatParticipant: StateFlow<String?> = _isServiceBound.flatMapLatest { bound ->
+        if (bound) intercomService?.privateChatParticipant ?: flowOf(null)
+        else flowOf(null)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     val isAutoPauseEnabled: StateFlow<Boolean> = _isServiceBound.flatMapLatest { bound ->
         if (bound) intercomService?.isAutoPauseEnabled ?: flowOf(false)
         else flowOf(false)

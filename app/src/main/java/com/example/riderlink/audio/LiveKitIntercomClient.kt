@@ -10,6 +10,7 @@ import io.livekit.android.room.Room
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.room.track.LocalAudioTrackOptions
 import io.livekit.android.room.track.DataPublishReliability
+import io.livekit.android.room.track.RemoteTrackPublication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,8 +41,17 @@ class LiveKitIntercomClient(private val context: Context) {
     private val _isSomeoneSpeaking = MutableStateFlow(false)
     val isSomeoneSpeaking: StateFlow<Boolean> = _isSomeoneSpeaking.asStateFlow()
 
+    private val _isRemoteSpeaking = MutableStateFlow(false)
+    val isRemoteSpeaking: StateFlow<Boolean> = _isRemoteSpeaking.asStateFlow()
+
+    private val _activeSpeaker = MutableStateFlow<String?>(null)
+    val activeSpeaker: StateFlow<String?> = _activeSpeaker.asStateFlow()
+
     private val _sharedTrack = MutableStateFlow<TrackInfo?>(null)
     val sharedTrack: StateFlow<TrackInfo?> = _sharedTrack.asStateFlow()
+
+    var privateChatParticipantIdentity: String? = null
+        private set
 
     companion object {
         private const val TAG = "LiveKitIntercomClient"
@@ -103,17 +113,60 @@ class LiveKitIntercomClient(private val context: Context) {
                         updateParticipants()
                         if (currentRoom.state == Room.State.DISCONNECTED) {
                             _isSomeoneSpeaking.value = false
+                            _isRemoteSpeaking.value = false
+                            _activeSpeaker.value = null
                             _sharedTrack.value = null
+                            privateChatParticipantIdentity = null
                         }
                     }
-                    is RoomEvent.ParticipantConnected,
+                    is RoomEvent.ParticipantConnected -> {
+                        updateParticipants()
+                        val target = privateChatParticipantIdentity
+                        if (target != null) {
+                            val newParticipant = event.participant
+                            if (newParticipant.identity?.value != target) {
+                                newParticipant.audioTrackPublications.forEach { pub ->
+                                    val remotePub = pub as Any as? RemoteTrackPublication
+                                    remotePub?.setSubscribed(false)
+                                }
+                            }
+                        }
+                    }
                     is RoomEvent.ParticipantDisconnected -> {
                         updateParticipants()
                     }
+                    is RoomEvent.TrackPublished -> {
+                        val target = privateChatParticipantIdentity
+                        if (target != null) {
+                            val participant = event.participant
+                            if (participant.identity?.value != target) {
+                                val pub = event.publication
+                                val remotePub = pub as Any as? RemoteTrackPublication
+                                remotePub?.setSubscribed(false)
+                            }
+                        }
+                    }
+                    is RoomEvent.TrackSubscribed -> {
+                        val target = privateChatParticipantIdentity
+                        if (target != null) {
+                            val participant = event.participant
+                            if (participant.identity?.value != target) {
+                                val pub = event.publication
+                                val remotePub = pub as Any as? RemoteTrackPublication
+                                remotePub?.setSubscribed(false)
+                            }
+                        }
+                    }
                     is RoomEvent.ActiveSpeakersChanged -> {
-                        // Mark speaking if any participant is actively speaking
                         val speakers = event.speakers
                         _isSomeoneSpeaking.value = speakers.isNotEmpty()
+                        
+                        val localIdentity = currentRoom.localParticipant.identity?.value
+                        val hasRemoteSpeaker = speakers.any { it.identity?.value != localIdentity }
+                        _isRemoteSpeaking.value = hasRemoteSpeaker
+                        
+                        val primarySpeaker = speakers.firstOrNull()?.identity?.value
+                        _activeSpeaker.value = primarySpeaker
                         Log.d(TAG, "Active speakers: ${speakers.map { it.identity?.value }}")
                     }
                     is RoomEvent.DataReceived -> {
@@ -201,6 +254,35 @@ class LiveKitIntercomClient(private val context: Context) {
             _isSomeoneSpeaking.value = false
             _sharedTrack.value = null
         }
+    }
+
+    fun getRoom(): Room? = room
+
+    fun isolateParticipant(targetIdentity: String) {
+        val currentRoom = room ?: return
+        privateChatParticipantIdentity = targetIdentity
+        
+        currentRoom.remoteParticipants.forEach { (_, participant) ->
+            val isTarget = participant.identity?.value == targetIdentity
+            participant.audioTrackPublications.forEach { pub ->
+                val remotePub = pub as Any as? RemoteTrackPublication
+                remotePub?.setSubscribed(isTarget)
+            }
+        }
+        Log.d(TAG, "Isolated participant: $targetIdentity")
+    }
+
+    fun resetPrivateChat() {
+        val currentRoom = room ?: return
+        privateChatParticipantIdentity = null
+        
+        currentRoom.remoteParticipants.forEach { (_, participant) ->
+            participant.audioTrackPublications.forEach { pub ->
+                val remotePub = pub as Any as? RemoteTrackPublication
+                remotePub?.setSubscribed(true)
+            }
+        }
+        Log.d(TAG, "Returned to group intercom, unmuted all participant streams")
     }
 
     private fun updateParticipants() {

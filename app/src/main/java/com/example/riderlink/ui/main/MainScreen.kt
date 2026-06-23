@@ -10,7 +10,9 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
+import kotlin.math.absoluteValue
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -97,6 +99,9 @@ fun MainScreen(
     val sharedTrack by mainViewModel.sharedTrack.collectAsStateWithLifecycle()
     val isAutoPauseEnabled by mainViewModel.isAutoPauseEnabled.collectAsStateWithLifecycle()
 
+    val activeSpeaker by mainViewModel.activeSpeaker.collectAsStateWithLifecycle()
+    val privateChatParticipant by mainViewModel.privateChatParticipant.collectAsStateWithLifecycle()
+
     var isSettingsOpen by remember { mutableStateOf(false) }
 
     var permissionsGranted by remember {
@@ -164,7 +169,9 @@ fun MainScreen(
                     isAutoPause = isAutoPauseEnabled,
                     onAutoPauseChange = { mainViewModel.setAutoPauseEnabled(it) },
                     onShareSong = { mainViewModel.shareSong(it.title, it.artist) },
-                    onClearSharedTrack = { mainViewModel.clearSharedTrack() }
+                    onClearSharedTrack = { mainViewModel.clearSharedTrack() },
+                    activeSpeaker = activeSpeaker,
+                    privateChatParticipant = privateChatParticipant
                 )
             } else {
                 HomeScreen(
@@ -519,6 +526,152 @@ private fun isNotificationListenerEnabled(context: android.content.Context): Boo
 }
 
 @Composable
+fun BreathingSoundwave(
+    isMuted: Boolean,
+    activeSpeaker: String?,
+    privateChatParticipant: String?,
+    modifier: Modifier = Modifier
+) {
+    val targetColor = when {
+        isMuted -> Color(0xFFFF2A54)
+        privateChatParticipant != null -> Color(0xFFC084FC)
+        activeSpeaker != null -> {
+            val hash = activeSpeaker.hashCode()
+            val hue = (hash.absoluteValue % 360).toFloat()
+            Color.hsl(hue = hue, saturation = 0.85f, lightness = 0.6f)
+        }
+        else -> Color(0xFF00F2FE)
+    }
+
+    val animatedColor by animateColorAsState(
+        targetValue = targetColor,
+        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+        label = "soundwave_color"
+    )
+
+    val infiniteTransition = rememberInfiniteTransition(label = "soundwave_breathing")
+    
+    val duration = if (activeSpeaker != null && !isMuted) 800 else 2000
+    val maxScale = if (activeSpeaker != null && !isMuted) 1.25f else 1.1f
+    val minScale = if (activeSpeaker != null && !isMuted) 0.85f else 0.95f
+
+    val scale by infiniteTransition.animateFloat(
+        initialValue = minScale,
+        targetValue = maxScale,
+        animationSpec = infiniteRepeatable(
+            animation = tween(duration, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "soundwave_scale"
+    )
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(300.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(240.dp)
+                .graphicsLayer {
+                    scaleX = scale * 1.15f
+                    scaleY = scale * 1.15f
+                    alpha = 0.08f
+                }
+                .background(animatedColor, CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .size(180.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = 0.15f
+                }
+                .background(animatedColor, CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .size(130.dp)
+                .graphicsLayer {
+                    scaleX = scale * 0.9f
+                    scaleY = scale * 0.9f
+                    alpha = 0.25f
+                }
+                .background(animatedColor, CircleShape)
+        )
+
+        Canvas(
+            modifier = Modifier
+                .size(120.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF13171C))
+                .border(1.dp, animatedColor.copy(alpha = 0.4f), CircleShape)
+        ) {
+            val barCount = 11
+            val centerIndex = barCount / 2
+            val spacing = 6.dp.toPx()
+            val barWidth = 4.dp.toPx()
+            val totalWidth = barCount * barWidth + (barCount - 1) * spacing
+            val startX = (size.width - totalWidth) / 2
+            
+            for (i in 0 until barCount) {
+                val distanceFromCenter = (i - centerIndex).absoluteValue
+                val baseHeightFactor = (centerIndex - distanceFromCenter + 1).toFloat() / (centerIndex + 1)
+                
+                val speechRipple = if (activeSpeaker != null && !isMuted) {
+                    val time = System.currentTimeMillis() / 200.0
+                    Math.sin(time + i).toFloat().absoluteValue * 0.5f + 0.5f
+                } else {
+                    1.0f
+                }
+                
+                val currentScale = scale
+                val height = (40.dp.toPx() * baseHeightFactor * currentScale * speechRipple).coerceIn(4.dp.toPx(), 70.dp.toPx())
+                val x = startX + i * (barWidth + spacing)
+                val y = (size.height - height) / 2
+                
+                drawRoundRect(
+                    color = animatedColor,
+                    topLeft = Offset(x, y),
+                    size = androidx.compose.ui.geometry.Size(barWidth, height),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2)
+                )
+            }
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(top = 180.dp)
+        ) {
+            val statusText = when {
+                isMuted -> "MUTED"
+                privateChatParticipant != null -> "PRIVATE: $privateChatParticipant"
+                activeSpeaker != null -> "SPEAKING: $activeSpeaker"
+                else -> "ACTIVE INTERCOM"
+            }
+            Text(
+                text = statusText,
+                color = animatedColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 2.sp,
+                textAlign = TextAlign.Center
+            )
+            if (privateChatParticipant != null) {
+                Text(
+                    text = "Double click Vol Down to exit",
+                    color = Color.White.copy(alpha = 0.4f),
+                    fontSize = 9.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun ActiveCallScreen(
     roomCode: String,
     connectionState: Room.State,
@@ -531,536 +684,204 @@ fun ActiveCallScreen(
     isAutoPause: Boolean,
     onAutoPauseChange: (Boolean) -> Unit,
     onShareSong: (TrackInfo) -> Unit,
-    onClearSharedTrack: () -> Unit
+    onClearSharedTrack: () -> Unit,
+    activeSpeaker: String?,
+    privateChatParticipant: String?
 ) {
     val context = LocalContext.current
-    var isNotificationAccessGranted by remember { mutableStateOf(false) }
 
-    LaunchedEffect(context) {
-        while (true) {
-            isNotificationAccessGranted = isNotificationListenerEnabled(context)
-            kotlinx.coroutines.delay(2000)
-        }
-    }
-
-    // Breathing/Pulsing Micro-animations for the Active Intercom Glowing Rings
-    val infiniteTransition = rememberInfiniteTransition(label = "breathing_halo")
-    
-    val haloScale1 by infiniteTransition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.14f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "scale1"
-    )
-    val haloAlpha1 by infiniteTransition.animateFloat(
-        initialValue = 0.10f,
-        targetValue = 0.25f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "alpha1"
-    )
-
-    val haloScale2 by infiniteTransition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.28f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = LinearOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "scale2"
-    )
-    val haloAlpha2 by infiniteTransition.animateFloat(
-        initialValue = 0.03f,
-        targetValue = 0.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = LinearOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "alpha2"
-    )
-
-    LazyColumn(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+            .background(Color(0xFF0C0F12))
     ) {
-        // Room header
-        item {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .padding(top = 48.dp)
+        ) {
+            val stateText = when (connectionState) {
+                Room.State.CONNECTED -> "SECURE MESH"
+                Room.State.CONNECTING -> "CONNECTING..."
+                Room.State.RECONNECTING -> "RECONNECTING..."
+                Room.State.DISCONNECTED -> "DISCONNECTED"
+            }
+            val stateColor = when (connectionState) {
+                Room.State.CONNECTED -> MintGreen
+                Room.State.CONNECTING -> SafetyOrange
+                Room.State.RECONNECTING -> SafetyOrange
+                Room.State.DISCONNECTED -> DarkMuteRed
+            }
+
+            Text(
+                text = "ROOM $roomCode",
+                fontSize = 32.sp,
+                fontWeight = FontWeight.ExtraLight,
+                color = Color.White,
+                letterSpacing = 2.sp,
+                fontFamily = FontFamily.Monospace
+            )
+            
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
             ) {
-                Spacer(modifier = Modifier.height(24.dp))
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .background(stateColor, CircleShape)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "ACTIVE VOICE ROOM",
+                    text = stateText,
+                    color = stateColor,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
-                    color = AccentCyan,
-                    letterSpacing = 3.sp
+                    letterSpacing = 1.sp
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                val formattedCode = roomCode.map { "$it" }.joinToString("   ")
-                Text(
-                    text = formattedCode,
-                    fontSize = 44.sp,
-                    fontWeight = FontWeight.Light,
-                    color = Color.White,
-                    letterSpacing = 1.5.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-                Spacer(modifier = Modifier.height(14.dp))
-                
-                val stateText = when (connectionState) {
-                    Room.State.CONNECTED -> "SECURE INTERCOM"
-                    Room.State.CONNECTING -> "CONNECTING..."
-                    Room.State.RECONNECTING -> "RECONNECTING..."
-                    Room.State.DISCONNECTED -> "DISCONNECTED"
-                }
-                val stateColor = when (connectionState) {
-                    Room.State.CONNECTED -> MintGreen
-                    Room.State.CONNECTING -> SafetyOrange
-                    Room.State.RECONNECTING -> SafetyOrange
-                    Room.State.DISCONNECTED -> DarkMuteRed
-                }
-
-                Box(
-                    modifier = Modifier
-                        .border(0.5.dp, stateColor.copy(alpha = 0.25f), RoundedCornerShape(50.dp))
-                        .background(stateColor.copy(alpha = 0.05f), RoundedCornerShape(50.dp))
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = stateText,
-                        color = stateColor,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.5.sp
-                    )
-                }
             }
-        }
 
-        // Giant glove-friendly minimal Mute toggle with breathing rings
-        item {
-            val muteInteractionSource = remember { MutableInteractionSource() }
-            val isMutePressed by muteInteractionSource.collectIsPressedAsState()
-            val muteScale by animateFloatAsState(
-                targetValue = if (isMutePressed) 0.92f else 1.0f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMediumLow
-                ),
-                label = "mute_press"
-            )
+            Spacer(modifier = Modifier.height(16.dp))
 
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(280.dp)
-                    .graphicsLayer {
-                        scaleX = muteScale
-                        scaleY = muteScale
-                    }
-            ) {
-                val colorGlow = if (isMuted) DarkMuteRed else MintGreen
-                
+            if (sharedTrack != null) {
                 Box(
                     modifier = Modifier
-                        .size(240.dp)
-                        .graphicsLayer {
-                            val scale = if (isMuted) 1.0f else haloScale2
-                            scaleX = scale
-                            scaleY = scale
-                            alpha = if (isMuted) 0.05f else haloAlpha2
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MintGreen.copy(alpha = 0.1f))
+                        .border(0.5.dp, MintGreen.copy(alpha = 0.3f), RoundedCornerShape(20.dp))
+                        .clickable {
+                            val query = "${sharedTrack.artist} ${sharedTrack.title}"
+                            val searchUrl = "https://www.youtube.com/results?search_query=${java.net.URLEncoder.encode(query, "UTF-8")}"
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(searchUrl))
+                            context.startActivity(intent)
                         }
-                        .background(colorGlow.copy(alpha = 0.4f), CircleShape)
-                )
-
-                Box(
-                    modifier = Modifier
-                        .size(200.dp)
-                        .graphicsLayer {
-                            val scale = if (isMuted) 0.98f else haloScale1
-                            scaleX = scale
-                            scaleY = scale
-                            alpha = if (isMuted) 0.12f else haloAlpha1
-                        }
-                        .background(colorGlow.copy(alpha = 0.5f), CircleShape)
-                )
-
-                Box(
-                    modifier = Modifier
-                        .size(170.dp)
-                        .background(DeepGrey, CircleShape)
-                        .border(1.dp, if (isMuted) DarkMuteRed.copy(alpha = 0.6f) else MintGreen.copy(alpha = 0.6f), CircleShape)
-                        .clip(CircleShape)
-                        .clickable(
-                            interactionSource = muteInteractionSource,
-                            indication = null
-                        ) { onMuteToggle() },
-                    contentAlignment = Alignment.Center
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = if (isMuted) "MUTED" else "LIVE",
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.ExtraLight,
-                            color = Color.White,
-                            letterSpacing = 1.sp
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (isMuted) "TAP TO TALK" else "TAP TO MUTE",
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White.copy(alpha = 0.35f),
-                            letterSpacing = 1.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        // Media Mixing & Song Sharing Card
-        item {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .glassCard()
-                    .padding(20.dp)
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "🎵 MEDIA MIXING & SHARING",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = AccentCyan,
-                            letterSpacing = 1.5.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    // Auto-Pause Toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1.5f)) {
+                        Text("🎵", fontSize = 12.sp)
+                        Column {
                             Text(
-                                text = "Auto-Pause Music",
+                                text = sharedTrack.title,
                                 color = Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = "Pauses music when someone speaks; otherwise mixes audio",
-                                color = MutedText,
-                                fontSize = 11.sp,
-                                lineHeight = 14.sp
-                            )
-                        }
-                        Switch(
-                            checked = isAutoPause,
-                            onCheckedChange = onAutoPauseChange,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = SpaceBlack,
-                                checkedTrackColor = AccentBlue,
-                                uncheckedThumbColor = MutedText,
-                                uncheckedTrackColor = DeepGrey,
-                                uncheckedBorderColor = BorderGrey
-                            )
-                        )
-                    }
-
-                    Divider(color = BorderGrey, thickness = 0.5.dp)
-
-                    // Local music metadata reader
-                    if (!isNotificationAccessGranted) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "Notification Access Required",
-                                color = SafetyOrange,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Grant access to read active Spotify/Apple Music track details for one-tap sharing.",
+                                text = sharedTrack.artist,
                                 color = Color.White.copy(alpha = 0.6f),
-                                fontSize = 11.sp,
-                                textAlign = TextAlign.Center,
-                                lineHeight = 15.sp
-                            )
-                            Button(
-                                onClick = {
-                                    val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                                    context.startActivity(intent)
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = SafetyOrange),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.height(36.dp)
-                            ) {
-                                Text("Grant Access", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    } else {
-                        if (localTrack != null) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "NOW PLAYING LOCAL",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MutedText,
-                                        letterSpacing = 1.sp
-                                    )
-                                    Text(
-                                        text = localTrack.title,
-                                        color = Color.White,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = localTrack.artist,
-                                        color = AccentBlue,
-                                        fontSize = 12.sp
-                                    )
-                                }
-                                
-                                Button(
-                                    onClick = { onShareSong(localTrack) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = MintGreen),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text("Share 🚀", color = SpaceBlack, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        } else {
-                            Text(
-                                text = "Play a song in Spotify / Apple Music to share...",
-                                color = MutedText,
-                                fontSize = 12.sp,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                fontSize = 10.sp
                             )
                         }
-                    }
-
-                    // Shared track display alert
-                    if (sharedTrack != null) {
-                        Divider(color = BorderGrey, thickness = 0.5.dp)
-                        
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MintGreen.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
-                                .border(1.dp, MintGreen.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .padding(12.dp)
+                        IconButton(
+                            onClick = { onClearSharedTrack() },
+                            modifier = Modifier.size(24.dp)
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "🎵 SHARED TRACK RECEIVED",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MintGreen,
-                                        letterSpacing = 1.sp
-                                    )
-                                    Text(
-                                        text = "Clear",
-                                        fontSize = 10.sp,
-                                        color = MutedText,
-                                        modifier = Modifier.clickable { onClearSharedTrack() }
-                                    )
-                                }
-                                
-                                Column {
-                                    Text(
-                                        text = sharedTrack.title,
-                                        color = Color.White,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = sharedTrack.artist,
-                                        color = Color.White.copy(alpha = 0.7f),
-                                        fontSize = 12.sp
-                                    )
-                                }
-
-                                Button(
-                                    onClick = {
-                                        val query = "${sharedTrack.artist} ${sharedTrack.title}"
-                                        val searchUrl = "https://www.youtube.com/results?search_query=${java.net.URLEncoder.encode(query, "UTF-8")}"
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(searchUrl))
-                                        context.startActivity(intent)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("Open Free Stream (YouTube)", color = SpaceBlack, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                }
-                            }
+                            Text("✕", color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp)
                         }
                     }
                 }
             }
         }
 
-        // List of Riders in Group
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "RIDERS CONNECTED (${participants.size})",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.3f),
-                    letterSpacing = 1.sp
-                )
-                Text(
-                    text = "● Monitoring",
-                    color = MintGreen,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.5.sp
-                )
-            }
-        }
+        BreathingSoundwave(
+            isMuted = isMuted,
+            activeSpeaker = activeSpeaker,
+            privateChatParticipant = privateChatParticipant,
+            modifier = Modifier.align(Alignment.Center)
+        )
 
-        if (participants.isEmpty()) {
-            item {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 48.dp)
+                .background(Color(0xFF161A1F).copy(alpha = 0.85f), RoundedCornerShape(44.dp))
+                .border(0.5.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(44.dp))
+                .padding(horizontal = 8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(100.dp)
-                        .glassCard(),
+                        .size(88.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = false)
+                        ) { onMuteToggle() },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "No other riders connected",
-                        color = Color.White.copy(alpha = 0.25f),
-                        fontSize = 14.sp
-                    )
-                }
-            }
-        } else {
-            items(participants, key = { it }) { participant ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0x02FFFFFF), RoundedCornerShape(12.dp))
-                        .border(0.5.dp, BorderGrey, RoundedCornerShape(12.dp))
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(Color(0x0AFFFFFF), CircleShape)
-                            .border(0.5.dp, Color.White.copy(alpha = 0.08f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val initials = participant.take(2).uppercase()
+                    val iconColor = if (isMuted) Color(0xFFFF2A54) else Color.White
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(if (isMuted) "🔇" else "🎙️", fontSize = 24.sp)
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = initials,
-                            color = AccentCyan,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp
+                            text = if (isMuted) "Unmute" else "Mute",
+                            color = iconColor.copy(alpha = 0.7f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Text(
-                        text = participant,
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 14.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .background(MintGreen, CircleShape)
-                    )
                 }
-            }
-        }
 
-        // Disconnect button
-        item {
-            val disconnectInteractionSource = remember { MutableInteractionSource() }
-            val isDisconnectPressed by disconnectInteractionSource.collectIsPressedAsState()
-            val disconnectScale by animateFloatAsState(
-                targetValue = if (isDisconnectPressed) 0.95f else 1.0f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMediumLow
-                ),
-                label = "disconnect_press"
-            )
-
-            Button(
-                onClick = onDisconnect,
-                interactionSource = disconnectInteractionSource,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Transparent, 
-                    disabledContainerColor = Color.Transparent
-                ),
-                contentPadding = PaddingValues(),
-                modifier = Modifier
-                    .graphicsLayer {
-                        scaleX = disconnectScale
-                        scaleY = disconnectScale
-                    }
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .background(RedGradient),
+                        .size(88.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = false)
+                        ) { onDisconnect() },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "Disconnect Intercom",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        letterSpacing = 0.5.sp
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("🚫", fontSize = 24.sp)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Leave",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(88.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = ripple(bounded = false)
+                        ) {
+                            if (localTrack != null) {
+                                onShareSong(localTrack)
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    val enabled = localTrack != null
+                    val alpha = if (enabled) 1.0f else 0.3f
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.graphicsLayer(alpha = alpha)
+                    ) {
+                        Text("🚀", fontSize = 24.sp)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Share",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
-            Spacer(modifier = Modifier.height(30.dp))
         }
     }
 }
