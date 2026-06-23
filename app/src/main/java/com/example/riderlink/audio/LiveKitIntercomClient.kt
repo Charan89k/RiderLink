@@ -53,11 +53,12 @@ class LiveKitIntercomClient(private val context: Context) {
         noiseSuppression: Boolean = true,
         echoCancellation: Boolean = true,
         autoGainControl: Boolean = true,
-        highPassFilter: Boolean = true
+        highPassFilter: Boolean = true,
+        useVoip: Boolean = true
     ) {
         disconnect() // Clean up any existing connection
         
-        Log.d(TAG, "Connecting to LiveKit room at $url (noiseSuppression=$noiseSuppression, echoCancellation=$echoCancellation, AGC=$autoGainControl, HPF=$highPassFilter)")
+        Log.d(TAG, "Connecting to LiveKit room at $url (noiseSuppression=$noiseSuppression, echoCancellation=$echoCancellation, AGC=$autoGainControl, HPF=$highPassFilter, useVoip=$useVoip)")
 
         // Enable Echo Cancellation, Noise Suppression, Automatic Gain Control, and High Pass Filter dynamically
         val options = RoomOptions(
@@ -70,12 +71,19 @@ class LiveKitIntercomClient(private val context: Context) {
             )
         )
 
+        val audioOutputType = if (useVoip) {
+            io.livekit.android.AudioType.CallAudioType()
+        } else {
+            io.livekit.android.AudioType.MediaAudioType()
+        }
+
         // Override default AudioSwitchHandler with NoAudioHandler so BluetoothAudioRouter manages Audio Focus
         val currentRoom = LiveKit.create(
             context,
             overrides = LiveKitOverrides(
                 audioOptions = io.livekit.android.AudioOptions(
-                    audioHandler = NoAudioHandler()
+                    audioHandler = NoAudioHandler(),
+                    audioOutputType = audioOutputType
                 )
             ),
             options = options

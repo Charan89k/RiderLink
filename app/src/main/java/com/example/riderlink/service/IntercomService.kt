@@ -135,7 +135,8 @@ class IntercomService : Service() {
                 noiseSuppression = noiseSuppression,
                 echoCancellation = echoCancellation,
                 autoGainControl = autoGainControl,
-                highPassFilter = highPassFilter
+                highPassFilter = highPassFilter,
+                useVoip = useVoip
             )
         }
     }
