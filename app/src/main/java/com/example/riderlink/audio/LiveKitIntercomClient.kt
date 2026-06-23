@@ -3,10 +3,13 @@ package com.example.riderlink.audio
 import android.content.Context
 import android.util.Log
 import io.livekit.android.LiveKit
+import io.livekit.android.LiveKitOverrides
 import io.livekit.android.RoomOptions
+import io.livekit.android.audio.NoAudioHandler
 import io.livekit.android.room.Room
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.room.track.LocalAudioTrackOptions
+import io.livekit.android.room.track.DataPublishReliability
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,6 +19,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import io.livekit.android.events.collect
 import kotlinx.coroutines.launch
+
+data class TrackInfo(val title: String, val artist: String)
 
 class LiveKitIntercomClient(private val context: Context) {
 
@@ -31,6 +36,12 @@ class LiveKitIntercomClient(private val context: Context) {
 
     private val _isMuted = MutableStateFlow(false)
     val isMuted: StateFlow<Boolean> = _isMuted.asStateFlow()
+
+    private val _isSomeoneSpeaking = MutableStateFlow(false)
+    val isSomeoneSpeaking: StateFlow<Boolean> = _isSomeoneSpeaking.asStateFlow()
+
+    private val _sharedTrack = MutableStateFlow<TrackInfo?>(null)
+    val sharedTrack: StateFlow<TrackInfo?> = _sharedTrack.asStateFlow()
 
     companion object {
         private const val TAG = "LiveKitIntercomClient"
@@ -52,10 +63,19 @@ class LiveKitIntercomClient(private val context: Context) {
             )
         )
 
-        val currentRoom = LiveKit.create(context, options = options)
+        // Override default AudioSwitchHandler with NoAudioHandler so BluetoothAudioRouter manages Audio Focus
+        val currentRoom = LiveKit.create(
+            context,
+            overrides = LiveKitOverrides(
+                audioOptions = io.livekit.android.AudioOptions(
+                    audioHandler = NoAudioHandler()
+                )
+            ),
+            options = options
+        )
         room = currentRoom
 
-        // Listen for events to track connection changes and participant listing
+        // Listen for events to track connection changes, participant listing, speaking, and shared tracks
         clientScope.launch {
             currentRoom.events.collect { event ->
                 Log.d(TAG, "LiveKit room event: $event")
@@ -66,10 +86,33 @@ class LiveKitIntercomClient(private val context: Context) {
                     is RoomEvent.Reconnected -> {
                         _connectionState.value = currentRoom.state
                         updateParticipants()
+                        if (currentRoom.state == Room.State.DISCONNECTED) {
+                            _isSomeoneSpeaking.value = false
+                            _sharedTrack.value = null
+                        }
                     }
                     is RoomEvent.ParticipantConnected,
                     is RoomEvent.ParticipantDisconnected -> {
                         updateParticipants()
+                    }
+                    is RoomEvent.ActiveSpeakersChanged -> {
+                        // Mark speaking if any participant is actively speaking
+                        val speakers = event.speakers
+                        _isSomeoneSpeaking.value = speakers.isNotEmpty()
+                        Log.d(TAG, "Active speakers: ${speakers.map { it.identity?.value }}")
+                    }
+                    is RoomEvent.DataReceived -> {
+                        val payload = event.data.toString(Charsets.UTF_8)
+                        Log.d(TAG, "Data payload received: $payload")
+                        if (payload.startsWith("song_share:")) {
+                            val parts = payload.substringAfter("song_share:").split("|")
+                            if (parts.size >= 2) {
+                                val title = parts[0]
+                                val artist = parts[1]
+                                _sharedTrack.value = TrackInfo(title, artist)
+                                Log.d(TAG, "Received track sync: $title - $artist")
+                            }
+                        }
                     }
                     else -> {}
                 }
@@ -102,6 +145,31 @@ class LiveKitIntercomClient(private val context: Context) {
         }
     }
 
+    fun shareSong(title: String, artist: String) {
+        val currentRoom = room ?: return
+        if (currentRoom.state != Room.State.CONNECTED) {
+            Log.w(TAG, "Cannot share song, room is not connected")
+            return
+        }
+        clientScope.launch {
+            try {
+                val payload = "song_share:$title|$artist"
+                val data = payload.toByteArray(Charsets.UTF_8)
+                currentRoom.localParticipant.publishData(
+                    data = data,
+                    reliability = DataPublishReliability.RELIABLE
+                )
+                Log.d(TAG, "Successfully published song share: $title - $artist")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error publishing song share", e)
+            }
+        }
+    }
+
+    fun clearSharedTrack() {
+        _sharedTrack.value = null
+    }
+
     fun disconnect() {
         val currentRoom = room ?: return
         Log.d(TAG, "Disconnecting from LiveKit room")
@@ -115,6 +183,8 @@ class LiveKitIntercomClient(private val context: Context) {
             _connectionState.value = Room.State.DISCONNECTED
             _participants.value = emptyList()
             _isMuted.value = false
+            _isSomeoneSpeaking.value = false
+            _sharedTrack.value = null
         }
     }
 
@@ -135,3 +205,4 @@ class LiveKitIntercomClient(private val context: Context) {
         Log.d(TAG, "Updated participants: $list")
     }
 }
+

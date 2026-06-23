@@ -13,10 +13,19 @@ import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 
+import android.media.AudioFocusRequest
+import android.media.AudioAttributes
+
 class BluetoothAudioRouter(private val context: Context) {
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var isRoutingStarted = false
+    private var activeFocusRequest: AudioFocusRequest? = null
+    private var isFocusExclusive = false
+
+    private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        Log.d(TAG, "Audio focus changed callback: $focusChange")
+    }
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
@@ -42,6 +51,45 @@ class BluetoothAudioRouter(private val context: Context) {
         private const val TAG = "BluetoothAudioRouter"
     }
 
+    fun requestAudioFocus(exclusive: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            abandonAudioFocus()
+
+            val focusGain = if (exclusive) {
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+            } else {
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+            }
+
+            val request = AudioFocusRequest.Builder(focusGain)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener(focusChangeListener)
+                .build()
+
+            activeFocusRequest = request
+            isFocusExclusive = exclusive
+            val result = audioManager.requestAudioFocus(request)
+            Log.d(TAG, "Requested audio focus (exclusive=$exclusive), result: $result")
+        }
+    }
+
+    fun abandonAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            activeFocusRequest?.let {
+                val result = audioManager.abandonAudioFocusRequest(it)
+                Log.d(TAG, "Abandoned audio focus request, result: $result")
+            }
+            activeFocusRequest = null
+            isFocusExclusive = false
+        }
+    }
+
     fun start() {
         if (isRoutingStarted) return
         isRoutingStarted = true
@@ -49,6 +97,9 @@ class BluetoothAudioRouter(private val context: Context) {
 
         // Force MODE_IN_COMMUNICATION for VoIP optimization
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+
+        // Request shared/ducked transient focus to allow simultaneous music playback
+        requestAudioFocus(exclusive = false)
 
         // Register audio device callback
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
@@ -69,6 +120,8 @@ class BluetoothAudioRouter(private val context: Context) {
         if (!isRoutingStarted) return
         isRoutingStarted = false
         Log.d(TAG, "Stopping Bluetooth audio routing")
+
+        abandonAudioFocus()
 
         try {
             context.unregisterReceiver(bluetoothReceiver)

@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.riderlink.audio.TokenGenerator
+import com.example.riderlink.audio.TrackInfo
 import com.example.riderlink.firebase.FirebaseRoomRepository
 import com.example.riderlink.firebase.RoomDetails
 import com.example.riderlink.service.IntercomService
@@ -80,11 +81,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else flowOf(false)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val localTrack: StateFlow<TrackInfo?> = _isServiceBound.flatMapLatest { bound ->
+        if (bound) intercomService?.localTrack ?: flowOf(null)
+        else flowOf(null)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val sharedTrack: StateFlow<TrackInfo?> = _isServiceBound.flatMapLatest { bound ->
+        if (bound) intercomService?.intercomClient?.sharedTrack ?: flowOf(null)
+        else flowOf(null)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val isAutoPauseEnabled: StateFlow<Boolean> = _isServiceBound.flatMapLatest { bound ->
+        if (bound) intercomService?.isAutoPauseEnabled ?: flowOf(false)
+        else flowOf(false)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    fun shareSong(title: String, artist: String) {
+        intercomService?.intercomClient?.shareSong(title, artist)
+    }
+
+    fun setAutoPauseEnabled(enabled: Boolean) {
+        intercomService?.setAutoPauseEnabled(enabled)
+    }
+
+    fun clearSharedTrack() {
+        intercomService?.intercomClient?.clearSharedTrack()
+    }
 
     companion object {
         private const val TAG = "MainViewModel"

@@ -17,6 +17,7 @@ import androidx.core.app.NotificationCompat
 import com.example.riderlink.MainActivity
 import com.example.riderlink.audio.BluetoothAudioRouter
 import com.example.riderlink.audio.LiveKitIntercomClient
+import com.example.riderlink.audio.TrackInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,6 +43,9 @@ class IntercomService : Service() {
     private val _roomCode = MutableStateFlow<String?>(null)
     val roomCode: StateFlow<String?> = _roomCode.asStateFlow()
 
+    val isAutoPauseEnabled = MutableStateFlow(false)
+    val localTrack = MutableStateFlow<TrackInfo?>(null)
+
     inner class LocalBinder : Binder() {
         fun getService(): IntercomService = this@IntercomService
     }
@@ -52,7 +56,10 @@ class IntercomService : Service() {
         audioRouter = BluetoothAudioRouter(this)
         intercomClient = LiveKitIntercomClient(this)
 
-        // Listen to client connection and mute states to update notification
+        val prefs = getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
+        isAutoPauseEnabled.value = prefs.getBoolean("auto_pause", false)
+
+        // Listen to client connection, mute states, and speaking states to update notifications and audio focus
         serviceScope.launch {
             launch {
                 intercomClient.connectionState.collect {
@@ -64,6 +71,23 @@ class IntercomService : Service() {
                     updateNotification()
                 }
             }
+            launch {
+                intercomClient.isSomeoneSpeaking.collect { someoneSpeaking ->
+                    Log.d(TAG, "isSomeoneSpeaking flow changed: $someoneSpeaking, autoPause=${isAutoPauseEnabled.value}")
+                    if (someoneSpeaking && isAutoPauseEnabled.value) {
+                        audioRouter.requestAudioFocus(exclusive = true)
+                    } else {
+                        audioRouter.requestAudioFocus(exclusive = false)
+                    }
+                }
+            }
+        }
+
+        // Capture metadata changes from the Notification Listener Service
+        IntercomNotificationListenerService.onMetadataChangedListener = { title, artist ->
+            Log.d(TAG, "Notification listener track change: $title by $artist")
+            localTrack.value = TrackInfo(title, artist)
+            updateNotification()
         }
     }
 
@@ -100,6 +124,21 @@ class IntercomService : Service() {
         }
     }
 
+    fun setAutoPauseEnabled(enabled: Boolean) {
+        isAutoPauseEnabled.value = enabled
+        val prefs = getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("auto_pause", enabled).apply()
+        
+        // Immediately adjust audio focus based on current speaker state
+        val someoneSpeaking = intercomClient.isSomeoneSpeaking.value
+        Log.d(TAG, "Auto-Pause changed to $enabled. Current speaking state: $someoneSpeaking")
+        if (someoneSpeaking && enabled) {
+            audioRouter.requestAudioFocus(exclusive = true)
+        } else {
+            audioRouter.requestAudioFocus(exclusive = false)
+        }
+    }
+
     fun disconnect() {
         intercomClient.disconnect()
         _roomCode.value = null
@@ -121,11 +160,10 @@ class IntercomService : Service() {
     }
 
     private fun releaseWakeLock() {
-        wakeLock?.let {
-            if (it.isHeld) {
-                it.release()
-                Log.d(TAG, "WakeLock released")
-            }
+        val currentLock = wakeLock
+        if (currentLock != null && currentLock.isHeld) {
+            currentLock.release()
+            Log.d(TAG, "WakeLock released")
         }
         wakeLock = null
     }
@@ -174,9 +212,12 @@ class IntercomService : Service() {
         val statusText = if (intercomClient.isMuted.value) "Muted" else "Listening"
         val muteText = if (intercomClient.isMuted.value) "Unmute" else "Mute"
 
+        val track = localTrack.value
+        val trackText = if (track != null) " | 🎵 ${track.title} - ${track.artist}" else ""
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("RiderLink Active Intercom")
-            .setContentText("Room: $roomCodeStr | Status: $statusText")
+            .setContentText("Room: $roomCodeStr | Status: $statusText$trackText")
             .setSmallIcon(android.R.drawable.presence_online)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -201,6 +242,7 @@ class IntercomService : Service() {
 
     override fun onDestroy() {
         Log.d(TAG, "Destroying IntercomService")
+        IntercomNotificationListenerService.onMetadataChangedListener = null
         intercomClient.disconnect()
         audioRouter.stop()
         releaseWakeLock()
@@ -219,3 +261,4 @@ class IntercomService : Service() {
         const val EXTRA_ROOM_CODE = "com.example.riderlink.extra.ROOM_CODE"
     }
 }
+
