@@ -13,6 +13,7 @@ import com.example.riderlink.audio.TokenGenerator
 import com.example.riderlink.firebase.FirebaseRoomRepository
 import com.example.riderlink.firebase.RoomDetails
 import com.example.riderlink.service.IntercomService
+import com.example.riderlink.Config
 import io.livekit.android.room.Room
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,9 +33,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val roomRepository = FirebaseRoomRepository(context)
 
     // Configuration states
-    val livekitUrl = MutableStateFlow("wss://demo.livekit.cloud")
-    val apiKey = MutableStateFlow("devkey")
-    val apiSecret = MutableStateFlow("secret")
+    val livekitUrl = MutableStateFlow(Config.DEFAULT_LIVEKIT_URL)
+    val apiKey = MutableStateFlow(Config.DEFAULT_LIVEKIT_API_KEY)
+    val apiSecret = MutableStateFlow(Config.DEFAULT_LIVEKIT_API_SECRET)
     val riderName = MutableStateFlow("Rider-${Random.nextInt(100, 1000)}")
 
     // Service binding state

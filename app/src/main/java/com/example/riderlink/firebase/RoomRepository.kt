@@ -99,12 +99,13 @@ class FirebaseRoomRepository(private val context: Context) : RoomRepository {
     }
 
     override suspend fun joinRoom(roomCode: String): RoomDetails? {
+        val cleanCode = roomCode.trim()
         val db = firestore
         if (db != null) {
             try {
                 val document = suspendCancellableCoroutine<com.google.firebase.firestore.DocumentSnapshot> { continuation ->
                     db.collection("rooms")
-                        .document(roomCode)
+                        .document(cleanCode)
                         .get()
                         .addOnSuccessListener { doc ->
                             continuation.resume(doc)
@@ -115,20 +116,28 @@ class FirebaseRoomRepository(private val context: Context) : RoomRepository {
                 }
                 if (document.exists()) {
                     val roomDetails = document.toObject(RoomDetails::class.java)
-                    Log.d(TAG, "Successfully fetched room $roomCode from Firestore")
-                    return roomDetails
+                    if (roomDetails != null) {
+                        Log.d(TAG, "Successfully fetched room $cleanCode from Firestore")
+                        return roomDetails
+                    }
                 } else {
-                    Log.w(TAG, "Room $roomCode not found in Firestore. Trying local simulation lookup.")
+                    Log.w(TAG, "Room $cleanCode not found in Firestore. Trying local simulation lookup.")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error reading room from Firestore, trying local simulation lookup", e)
+                Log.e(TAG, "Error reading room from Firestore: ${e.message}. Trying local simulation lookup.", e)
             }
         }
 
         // Fallback to simulated database
-        return synchronized(simulatedRooms) {
-            simulatedRooms[roomCode]
+        val simulated = synchronized(simulatedRooms) {
+            simulatedRooms[cleanCode]
         }
+        if (simulated != null) {
+            Log.d(TAG, "Found room $cleanCode in simulated memory")
+        } else {
+            Log.w(TAG, "Room $cleanCode not found in simulated memory either")
+        }
+        return simulated
     }
 
     private fun generate4DigitCode(): String {

@@ -15,7 +15,7 @@ class MainScreenTest {
   @Before
   fun setup() {
     composeTestRule.setContent { 
-      MainScreen(onItemClick = {})
+      MainScreen()
     }
   }
 
@@ -26,6 +26,6 @@ class MainScreenTest {
 
   @Test
   fun createRoomButton_exists() {
-    composeTestRule.onNodeWithText("CREATE ROOM").assertExists()
+    composeTestRule.onNodeWithText("Create Room").assertExists()
   }
 }

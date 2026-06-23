@@ -6,53 +6,79 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation3.runtime.NavKey
 import com.example.riderlink.ui.MainViewModel
 import io.livekit.android.room.Room
 
-// Modern High-Contrast Color Palette for Riders
-private val DarkCharcoal = Color(0xFF121212)
-private val CardBackground = Color(0xFF1E1E1E)
-private val ElectricCyan = Color(0xFF00E5FF)
-private val NeonLime = Color(0xFFCCFF00)
-private val SafetyOrange = Color(0xFFFF9100)
-private val MutedText = Color(0xFF888888)
-private val ActiveGreen = Color(0xFF00E676)
-private val MuteRed = Color(0xFFFF1744)
+// Premium Minimalist Dark Theme Colors
+private val SpaceBlack = Color(0xFF040405)
+private val DeepGrey = Color(0xFF121214)
+private val BorderGrey = Color(0x0FFFFFFF)
+private val CardOverlay = Color(0x05FFFFFF)
+private val AccentBlue = Color(0xFF00F2FE)
+private val AccentCyan = Color(0xFF4FACFE)
+private val MintGreen = Color(0xFF00FFB0)
+private val DarkMuteRed = Color(0xFFFF2A54)
+private val SoftRed = Color(0xFFFF5252)
+private val SafetyOrange = Color(0xFFF59E0B)
+private val MutedText = Color(0xFF71717A)
+
+// Gradients
+private val BlueGradient = Brush.horizontalGradient(listOf(Color(0xFF00F2FE), Color(0xFF4FACFE)))
+private val RedGradient = Brush.horizontalGradient(listOf(Color(0xFFFF2A54), Color(0xFFFF5252)))
+private val GreenGradient = Brush.horizontalGradient(listOf(Color(0xFF00FFB0), Color(0xFF00F2FE)))
+private val BackgroundBrush = Brush.verticalGradient(listOf(SpaceBlack, Color(0xFF09090C)))
+
+// Glassmorphism modifier helper
+private fun Modifier.glassCard(cornerRadius: Dp = 16.dp) = this
+    .background(CardOverlay, RoundedCornerShape(cornerRadius))
+    .border(0.5.dp, BorderGrey, RoundedCornerShape(cornerRadius))
+    .clip(RoundedCornerShape(cornerRadius))
 
 @Composable
 fun MainScreen(
-    onItemClick: (NavKey) -> Unit,
     modifier: Modifier = Modifier,
     mainViewModel: MainViewModel = viewModel()
 ) {
     val context = LocalContext.current
 
-    // State bindings
     val connectionState by mainViewModel.connectionState.collectAsStateWithLifecycle()
     val roomCode by mainViewModel.roomCode.collectAsStateWithLifecycle()
     val participants by mainViewModel.participants.collectAsStateWithLifecycle()
@@ -60,7 +86,6 @@ fun MainScreen(
     val error by mainViewModel.error.collectAsStateWithLifecycle()
     val isLoading by mainViewModel.isLoading.collectAsStateWithLifecycle()
 
-    // Permission tracking
     var permissionsGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED &&
@@ -74,7 +99,6 @@ fun MainScreen(
         permissionsGranted = results.values.all { it }
     }
 
-    // Launch permission request on startup
     LaunchedEffect(Unit) {
         val list = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -88,11 +112,33 @@ fun MainScreen(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = DarkCharcoal
+        color = SpaceBlack
     ) {
-        Box(modifier = modifier.fillMaxSize()) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(BackgroundBrush)
+        ) {
+            // High-End Radial Light Leak Accent in Background - Optimized with drawWithCache
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(300.dp)
+                    .graphicsLayer(alpha = 0.18f)
+                    .align(Alignment.TopCenter)
+                    .drawWithCache {
+                        val brush = Brush.radialGradient(
+                            colors = listOf(AccentBlue, Color.Transparent),
+                            center = Offset(size.width / 2, 0f),
+                            radius = size.width * 0.8f
+                        )
+                        onDrawBehind {
+                            drawCircle(brush = brush, center = Offset(size.width / 2, 0f), radius = size.width * 0.8f)
+                        }
+                    }
+            )
+
             if (roomCode != null) {
-                // Active session screen
                 ActiveCallScreen(
                     roomCode = roomCode!!,
                     connectionState = connectionState,
@@ -102,7 +148,6 @@ fun MainScreen(
                     onDisconnect = { mainViewModel.disconnect() }
                 )
             } else {
-                // Config and create/join screen
                 HomeScreen(
                     mainViewModel = mainViewModel,
                     permissionsGranted = permissionsGranted,
@@ -119,31 +164,29 @@ fun MainScreen(
                 )
             }
 
-            // Global Loading Indicator
             if (isLoading) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.6f)),
+                        .background(SpaceBlack.copy(alpha = 0.7f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator(color = ElectricCyan)
+                    CircularProgressIndicator(color = AccentBlue, strokeWidth = 3.dp)
                 }
             }
 
-            // Global Error Display
             error?.let { errMessage ->
                 AlertDialog(
                     onDismissRequest = { mainViewModel.clearError() },
                     confirmButton = {
                         TextButton(onClick = { mainViewModel.clearError() }) {
-                            Text("OK", color = ElectricCyan)
+                            Text("OK", color = AccentBlue, fontWeight = FontWeight.Bold)
                         }
                     },
-                    title = { Text("Error", color = Color.White, fontWeight = FontWeight.Bold) },
-                    text = { Text(errMessage, color = Color.White) },
-                    containerColor = CardBackground,
-                    shape = RoundedCornerShape(16.dp)
+                    title = { Text("Information", color = Color.White, fontWeight = FontWeight.Bold) },
+                    text = { Text(errMessage, color = Color.White.copy(alpha = 0.8f)) },
+                    containerColor = DeepGrey,
+                    shape = RoundedCornerShape(20.dp)
                 )
             }
         }
@@ -167,239 +210,250 @@ fun HomeScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        // App Branding Header
-        item {
-            Spacer(modifier = Modifier.height(24.dp))
+        item(key = "header") {
+            Spacer(modifier = Modifier.height(48.dp))
             Text(
                 text = "RiderLink",
-                fontSize = 42.sp,
-                fontWeight = FontWeight.Black,
-                color = ElectricCyan,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.ExtraLight,
+                color = Color.White,
+                letterSpacing = 1.5.sp,
                 textAlign = TextAlign.Center
             )
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Group Voice Intercom",
-                fontSize = 16.sp,
-                color = MutedText,
+                text = "MINIMAL GROUP INTERCOM",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = AccentBlue,
+                letterSpacing = 3.sp,
                 textAlign = TextAlign.Center
             )
+            Spacer(modifier = Modifier.height(24.dp))
         }
 
-        // Permission status warning banner
         if (!permissionsGranted) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = SafetyOrange.copy(alpha = 0.2f)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+            item(key = "permissions") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glassCard()
+                        .background(SoftRed.copy(alpha = 0.06f))
+                        .padding(20.dp)
                 ) {
                     Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text(
-                            text = "Microphone & Bluetooth permission required!",
-                            color = SafetyOrange,
+                            text = "Permissions Required",
+                            color = SoftRed,
                             fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
+                            fontSize = 14.sp,
+                            letterSpacing = 0.5.sp
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "RiderLink requires Microphone and Bluetooth permissions to route voice intercom stream to your headset.",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 18.sp
+                        )
                         Button(
                             onClick = onRequestPermissions,
-                            colors = ButtonDefaults.buttonColors(containerColor = SafetyOrange)
+                            colors = ButtonDefaults.buttonColors(containerColor = SoftRed),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("Grant Permissions", color = Color.Black, fontWeight = FontWeight.Bold)
+                            Text("Grant Access", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
         }
 
-        // Rider Profile Card
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CardBackground),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
+        // Rider Identity Card
+        item(key = "identity") {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassCard()
+                    .padding(20.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text("RIDER PROFILE", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = ElectricCyan)
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text(
+                        text = "RIDER IDENTITY",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.35f),
+                        letterSpacing = 1.5.sp
+                    )
                     OutlinedTextField(
                         value = riderName,
                         onValueChange = { mainViewModel.riderName.value = it },
-                        label = { Text("Display Name") },
+                        label = { Text("Display Name", fontSize = 12.sp, color = MutedText) },
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ElectricCyan,
-                            focusedLabelColor = ElectricCyan,
-                            unfocusedTextColor = Color.White,
-                            focusedTextColor = Color.White
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        }
-
-        // Create Room Card
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CardBackground),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "START NEW GROUP",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = NeonLime,
-                        modifier = Modifier.align(Alignment.Start)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Button(
-                        onClick = { mainViewModel.createRoom() },
-                        colors = ButtonDefaults.buttonColors(containerColor = NeonLime),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(64.dp), // Large glove-friendly height
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(
-                            text = "CREATE ROOM",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color.Black
-                        )
-                    }
-                }
-            }
-        }
-
-        // Join Room Card
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CardBackground),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "JOIN EXISTING GROUP",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = ElectricCyan,
-                        modifier = Modifier.align(Alignment.Start)
-                    )
-                    OutlinedTextField(
-                        value = joinCodeInput,
-                        onValueChange = {
-                            if (it.length <= 4 && it.all { char -> char.isDigit() }) {
-                                joinCodeInput = it
-                            }
-                        },
-                        placeholder = { Text("Enter 4-Digit Code", fontSize = 18.sp, color = MutedText) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ElectricCyan,
+                            focusedBorderColor = AccentBlue.copy(alpha = 0.8f),
+                            unfocusedBorderColor = BorderGrey,
                             focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedPlaceholderColor = MutedText,
-                            unfocusedPlaceholderColor = MutedText
+                            unfocusedTextColor = Color.White.copy(alpha = 0.9f),
+                            focusedLabelColor = AccentBlue,
+                            unfocusedLabelColor = MutedText,
+                            focusedContainerColor = Color(0x02FFFFFF),
+                            unfocusedContainerColor = Color(0x02FFFFFF)
                         ),
-                        textStyle = LocalTextStyle.current.copy(
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center
-                        ),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Button(
-                        onClick = { mainViewModel.joinRoom(joinCodeInput) },
-                        colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan),
-                        enabled = joinCodeInput.length == 4,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(64.dp),
-                        shape = RoundedCornerShape(12.dp)
+                }
+            }
+        }
+
+        // Action Interface
+        item(key = "intercom_options") {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassCard()
+                    .padding(20.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Text(
+                        text = "INTERCOM OPTIONS",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.35f),
+                        letterSpacing = 1.5.sp
+                    )
+                    
+                    // Create Button
+                    RiderLinkButton(
+                        text = "Create Room",
+                        onClick = { mainViewModel.createRoom() },
+                        gradient = GreenGradient,
+                        textColor = SpaceBlack
+                    )
+
+                    // Divider
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Box(modifier = Modifier.weight(1f).height(0.5.dp).background(BorderGrey))
                         Text(
-                            text = "JOIN ROOM",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Black,
-                            color = Color.Black
+                            text = "OR JOIN CODE",
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = Color.White.copy(alpha = 0.25f),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
                         )
+                        Box(modifier = Modifier.weight(1f).height(0.5.dp).background(BorderGrey))
                     }
+
+                    // Join Interface
+                    DigitCodeInput(
+                        value = joinCodeInput,
+                        onValueChange = { joinCodeInput = it }
+                    )
+
+                    RiderLinkButton(
+                        text = "Join Room",
+                        onClick = { mainViewModel.joinRoom(joinCodeInput) },
+                        enabled = joinCodeInput.length == 4,
+                        gradient = BlueGradient,
+                        textColor = SpaceBlack
+                    )
                 }
             }
         }
 
         // Advanced Configuration
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CardBackground.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
+        item(key = "advanced") {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassCard()
+                    .clickable { isAdvancedExpanded = !isAdvancedExpanded }
+                    .padding(vertical = 16.dp, horizontal = 20.dp)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { isAdvancedExpanded = !isAdvancedExpanded }
-                            .padding(vertical = 4.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Advanced LiveKit Settings", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Advanced LiveKit Credentials",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = 0.5.sp
+                        )
                         Text(
                             text = if (isAdvancedExpanded) "▲" else "▼",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
+                            color = Color.White.copy(alpha = 0.4f),
+                            fontSize = 10.sp
                         )
                     }
                     AnimatedVisibility(visible = isAdvancedExpanded) {
                         Column(
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(top = 12.dp)
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.padding(top = 10.dp)
                         ) {
                             OutlinedTextField(
                                 value = livekitUrl,
                                 onValueChange = { mainViewModel.livekitUrl.value = it },
-                                label = { Text("Server URL") },
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ElectricCyan, unfocusedTextColor = Color.White, focusedTextColor = Color.White),
+                                label = { Text("Server URL", fontSize = 12.sp) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = AccentBlue.copy(alpha = 0.8f),
+                                    unfocusedBorderColor = BorderGrey,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedLabelColor = AccentBlue,
+                                    unfocusedLabelColor = MutedText
+                                ),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.fillMaxWidth()
                             )
                             OutlinedTextField(
                                 value = apiKey,
                                 onValueChange = { mainViewModel.apiKey.value = it },
-                                label = { Text("API Key") },
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ElectricCyan, unfocusedTextColor = Color.White, focusedTextColor = Color.White),
+                                label = { Text("API Key", fontSize = 12.sp) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = AccentBlue.copy(alpha = 0.8f),
+                                    unfocusedBorderColor = BorderGrey,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedLabelColor = AccentBlue,
+                                    unfocusedLabelColor = MutedText
+                                ),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.fillMaxWidth()
                             )
                             OutlinedTextField(
                                 value = apiSecret,
                                 onValueChange = { mainViewModel.apiSecret.value = it },
-                                label = { Text("API Secret") },
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ElectricCyan, unfocusedTextColor = Color.White, focusedTextColor = Color.White),
+                                label = { Text("API Secret", fontSize = 12.sp) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = AccentBlue.copy(alpha = 0.8f),
+                                    unfocusedBorderColor = BorderGrey,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedLabelColor = AccentBlue,
+                                    unfocusedLabelColor = MutedText
+                                ),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
                 }
             }
+            Spacer(modifier = Modifier.height(40.dp))
         }
     }
 }
@@ -413,6 +467,47 @@ fun ActiveCallScreen(
     onMuteToggle: () -> Unit,
     onDisconnect: () -> Unit
 ) {
+    // Breathing/Pulsing Micro-animations for the Active Intercom Glowing Rings
+    val infiniteTransition = rememberInfiniteTransition(label = "breathing_halo")
+    
+    val haloScale1 by infiniteTransition.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.14f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale1"
+    )
+    val haloAlpha1 by infiniteTransition.animateFloat(
+        initialValue = 0.10f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alpha1"
+    )
+
+    val haloScale2 by infiniteTransition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.28f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = LinearOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale2"
+    )
+    val haloAlpha2 by infiniteTransition.animateFloat(
+        initialValue = 0.03f,
+        targetValue = 0.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = LinearOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alpha2"
+    )
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -420,70 +515,137 @@ fun ActiveCallScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Room header info
+        // Room header
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("ACTIVE INTERCOM", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ElectricCyan)
-            Spacer(modifier = Modifier.height(4.dp))
-            // Big room code
+            Spacer(modifier = Modifier.height(24.dp))
             Text(
-                text = roomCode,
-                fontSize = 80.sp,
-                fontWeight = FontWeight.Black,
-                color = Color.White,
-                letterSpacing = 4.sp
+                text = "ACTIVE VOICE ROOM",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = AccentCyan,
+                letterSpacing = 3.sp
             )
-            // Connection state indicator
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            val formattedCode = roomCode.map { "$it" }.joinToString("   ")
+            Text(
+                text = formattedCode,
+                fontSize = 44.sp,
+                fontWeight = FontWeight.Light,
+                color = Color.White,
+                letterSpacing = 1.5.sp,
+                fontFamily = FontFamily.Monospace
+            )
+            Spacer(modifier = Modifier.height(14.dp))
+            
             val stateText = when (connectionState) {
-                Room.State.CONNECTED -> "CONNECTED"
+                Room.State.CONNECTED -> "SECURE INTERCOM"
                 Room.State.CONNECTING -> "CONNECTING..."
                 Room.State.RECONNECTING -> "RECONNECTING..."
                 Room.State.DISCONNECTED -> "DISCONNECTED"
-                else -> "RECONNECTING..."
             }
             val stateColor = when (connectionState) {
-                Room.State.CONNECTED -> ActiveGreen
+                Room.State.CONNECTED -> MintGreen
                 Room.State.CONNECTING -> SafetyOrange
                 Room.State.RECONNECTING -> SafetyOrange
-                Room.State.DISCONNECTED -> MuteRed
-                else -> SafetyOrange
+                Room.State.DISCONNECTED -> DarkMuteRed
             }
-            Text(
-                text = stateText,
-                color = stateColor,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.ExtraBold
-            )
+
+            Box(
+                modifier = Modifier
+                    .border(0.5.dp, stateColor.copy(alpha = 0.25f), RoundedCornerShape(50.dp))
+                    .background(stateColor.copy(alpha = 0.05f), RoundedCornerShape(50.dp))
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = stateText,
+                    color = stateColor,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp
+                )
+            }
         }
 
-        // Giant glove-friendly Mute button
-        Button(
-            onClick = onMuteToggle,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isMuted) MuteRed else ActiveGreen
+        // Giant glove-friendly minimal Mute toggle with breathing rings
+        val muteInteractionSource = remember { MutableInteractionSource() }
+        val isMutePressed by muteInteractionSource.collectIsPressedAsState()
+        val muteScale by animateFloatAsState(
+            targetValue = if (isMutePressed) 0.92f else 1.0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMediumLow
             ),
+            label = "mute_press"
+        )
+
+        Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(220.dp)
-                .border(8.dp, Color.White.copy(alpha = 0.15f), CircleShape),
-            shape = CircleShape
+                .size(260.dp)
+                .graphicsLayer {
+                    scaleX = muteScale
+                    scaleY = muteScale
+                }
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = if (isMuted) "MUTED" else "LIVE",
-                    fontSize = 38.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color.White
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (isMuted) "TAP TO TALK" else "TAP TO MUTE",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.8f)
-                )
+            val colorGlow = if (isMuted) DarkMuteRed else MintGreen
+            
+            Box(
+                modifier = Modifier
+                    .size(240.dp)
+                    .graphicsLayer {
+                        val scale = if (isMuted) 1.0f else haloScale2
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = if (isMuted) 0.05f else haloAlpha2
+                    }
+                    .background(colorGlow.copy(alpha = 0.4f), CircleShape)
+            )
+
+            Box(
+                modifier = Modifier
+                    .size(200.dp)
+                    .graphicsLayer {
+                        val scale = if (isMuted) 0.98f else haloScale1
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = if (isMuted) 0.12f else haloAlpha1
+                    }
+                    .background(colorGlow.copy(alpha = 0.5f), CircleShape)
+            )
+
+            Box(
+                modifier = Modifier
+                    .size(170.dp)
+                    .background(DeepGrey, CircleShape)
+                    .border(1.dp, if (isMuted) DarkMuteRed.copy(alpha = 0.6f) else MintGreen.copy(alpha = 0.6f), CircleShape)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = muteInteractionSource,
+                        indication = null
+                    ) { onMuteToggle() },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = if (isMuted) "MUTED" else "LIVE",
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.ExtraLight,
+                        color = Color.White,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (isMuted) "TAP TO TALK" else "TAP TO MUTE",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.35f),
+                        letterSpacing = 1.sp
+                    )
+                }
             }
         }
 
@@ -492,7 +654,7 @@ fun ActiveCallScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(vertical = 24.dp)
+                .padding(vertical = 16.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -500,59 +662,82 @@ fun ActiveCallScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "RIDERS IN GROUP (${participants.size})",
-                    fontSize = 12.sp,
+                    text = "RIDERS CONNECTED (${participants.size})",
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
-                    color = MutedText
+                    color = Color.White.copy(alpha = 0.3f),
+                    letterSpacing = 1.sp
                 )
                 Text(
-                    text = "● Live",
-                    color = ActiveGreen,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
+                    text = "● Monitoring",
+                    color = MintGreen,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp
                 )
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CardBackground),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
+            Spacer(modifier = Modifier.height(12.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassCard()
+                    .weight(1f)
             ) {
                 if (participants.isEmpty()) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(24.dp),
+                        modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("No other riders connected", color = MutedText)
+                        Text(
+                            text = "No other riders connected",
+                            color = Color.White.copy(alpha = 0.25f),
+                            fontSize = 14.sp
+                        )
                     }
                 } else {
                     LazyColumn(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                            .fillMaxSize()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(participants) { participant ->
+                        items(participants, key = { it }) { participant ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(DarkCharcoal, RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    .background(Color(0x02FFFFFF), RoundedCornerShape(12.dp))
+                                    .border(0.5.dp, BorderGrey, RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(8.dp)
-                                        .background(ActiveGreen, CircleShape)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
+                                        .size(36.dp)
+                                        .background(Color(0x0AFFFFFF), CircleShape)
+                                        .border(0.5.dp, Color.White.copy(alpha = 0.08f), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    val initials = participant.take(2).uppercase()
+                                    Text(
+                                        text = initials,
+                                        color = AccentCyan,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.5.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(14.dp))
                                 Text(
                                     text = participant,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .background(MintGreen, CircleShape)
                                 )
                             }
                         }
@@ -562,20 +747,192 @@ fun ActiveCallScreen(
         }
 
         // Disconnect button
+        val disconnectInteractionSource = remember { MutableInteractionSource() }
+        val isDisconnectPressed by disconnectInteractionSource.collectIsPressedAsState()
+        val disconnectScale by animateFloatAsState(
+            targetValue = if (isDisconnectPressed) 0.95f else 1.0f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            ),
+            label = "disconnect_press"
+        )
+
         Button(
             onClick = onDisconnect,
-            colors = ButtonDefaults.buttonColors(containerColor = MuteRed),
+            interactionSource = disconnectInteractionSource,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color.Transparent, 
+                disabledContainerColor = Color.Transparent
+            ),
+            contentPadding = PaddingValues(),
             modifier = Modifier
+                .graphicsLayer {
+                    scaleX = disconnectScale
+                    scaleY = disconnectScale
+                }
                 .fillMaxWidth()
-                .height(64.dp),
-            shape = RoundedCornerShape(12.dp)
+                .height(56.dp),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(RedGradient),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Disconnect Intercom",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    letterSpacing = 0.5.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun RiderLinkButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    gradient: Brush = BlueGradient,
+    textColor: Color = SpaceBlack
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.95f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "button_press"
+    )
+
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        interactionSource = interactionSource,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Transparent, 
+            disabledContainerColor = Color.Transparent
+        ),
+        contentPadding = PaddingValues(),
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .fillMaxWidth()
+            .height(56.dp),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        val currentGradient = if (enabled) gradient else Brush.horizontalGradient(listOf(Color(0xFF1B1B1F), Color(0xFF1B1B1F)))
+        val currentTextColor = if (enabled) textColor else Color.White.copy(alpha = 0.2f)
+        
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(currentGradient),
+            contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "DISCONNECT",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Black,
-                color = Color.White
+                text = text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = currentTextColor,
+                letterSpacing = 0.5.sp
             )
         }
+    }
+}
+
+@Composable
+fun DigitCodeInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "indicator")
+    val indicatorAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alpha"
+    )
+
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = { newVal ->
+                if (newVal.length <= 4 && newVal.all { it.isDigit() }) {
+                    onValueChange(newVal)
+                }
+            },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            textStyle = TextStyle(color = Color.Transparent),
+            cursorBrush = SolidColor(Color.Transparent),
+            decorationBox = { innerTextField ->
+                Box(contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.size(1.dp).graphicsLayer(alpha = 0f)) {
+                        innerTextField()
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        for (i in 0 until 4) {
+                            val char = value.getOrNull(i)
+                            val isCurrentChar = value.length == i
+                            val isLastChar = value.length == 4 && i == 3
+                            val isFocused = isCurrentChar || isLastChar
+                            
+                            val glowColor = if (isFocused) AccentBlue else BorderGrey
+                            val bgAlpha = if (isFocused) 0.12f else 0.04f
+                            
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 60.dp, height = 68.dp)
+                                    .background(Color.White.copy(alpha = bgAlpha), RoundedCornerShape(14.dp))
+                                    .border(
+                                        1.dp, 
+                                        if (isFocused) AccentBlue.copy(alpha = 0.8f) else BorderGrey, 
+                                        RoundedCornerShape(14.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = char?.toString() ?: "",
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Normal,
+                                    color = Color.White,
+                                    letterSpacing = 0.sp
+                                )
+                                if (isCurrentChar) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .padding(bottom = 10.dp)
+                                            .width(14.dp)
+                                            .height(2.dp)
+                                            .background(AccentBlue.copy(alpha = indicatorAlpha), RoundedCornerShape(1.dp))
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
     }
 }
