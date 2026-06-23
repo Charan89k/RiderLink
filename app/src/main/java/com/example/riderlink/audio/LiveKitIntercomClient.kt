@@ -47,18 +47,25 @@ class LiveKitIntercomClient(private val context: Context) {
         private const val TAG = "LiveKitIntercomClient"
     }
 
-    suspend fun connect(url: String, token: String) {
+    suspend fun connect(
+        url: String, 
+        token: String,
+        noiseSuppression: Boolean = true,
+        echoCancellation: Boolean = true,
+        autoGainControl: Boolean = true,
+        highPassFilter: Boolean = true
+    ) {
         disconnect() // Clean up any existing connection
         
-        Log.d(TAG, "Connecting to LiveKit room at $url")
+        Log.d(TAG, "Connecting to LiveKit room at $url (noiseSuppression=$noiseSuppression, echoCancellation=$echoCancellation, AGC=$autoGainControl, HPF=$highPassFilter)")
 
-        // Enable Echo Cancellation, Noise Suppression, Automatic Gain Control, and High Pass Filter
+        // Enable Echo Cancellation, Noise Suppression, Automatic Gain Control, and High Pass Filter dynamically
         val options = RoomOptions(
             audioTrackCaptureDefaults = LocalAudioTrackOptions(
-                noiseSuppression = true,
-                echoCancellation = true,
-                autoGainControl = true,
-                highPassFilter = true,
+                noiseSuppression = noiseSuppression,
+                echoCancellation = echoCancellation,
+                autoGainControl = autoGainControl,
+                highPassFilter = highPassFilter,
                 typingNoiseDetection = false
             )
         )

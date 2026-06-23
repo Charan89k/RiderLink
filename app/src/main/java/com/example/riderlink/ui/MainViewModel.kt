@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.media.AudioManager
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -32,6 +33,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val context = application.applicationContext
     private val roomRepository = FirebaseRoomRepository(context)
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val prefs = context.getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
 
     // Configuration states
     val livekitUrl = MutableStateFlow(Config.DEFAULT_LIVEKIT_URL)
@@ -45,12 +48,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var intercomService: IntercomService? = null
 
+    // Audio stream max volumes
+    val maxVoiceVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+    val maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+
+    private val _voiceVolume = MutableStateFlow(audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL))
+    val voiceVolume: StateFlow<Int> = _voiceVolume.asStateFlow()
+
+    private val _musicVolume = MutableStateFlow(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC))
+    val musicVolume: StateFlow<Int> = _musicVolume.asStateFlow()
+
+    // Dynamic voice processing filter variables
+    private val _noiseSuppressionEnabled = MutableStateFlow(prefs.getBoolean("noise_suppression", true))
+    val noiseSuppressionEnabled: StateFlow<Boolean> = _noiseSuppressionEnabled.asStateFlow()
+
+    private val _echoCancellationEnabled = MutableStateFlow(prefs.getBoolean("echo_cancellation", true))
+    val echoCancellationEnabled: StateFlow<Boolean> = _echoCancellationEnabled.asStateFlow()
+
+    private val _autoGainControlEnabled = MutableStateFlow(prefs.getBoolean("auto_gain_control", true))
+    val autoGainControlEnabled: StateFlow<Boolean> = _autoGainControlEnabled.asStateFlow()
+
+    private val _highPassFilterEnabled = MutableStateFlow(prefs.getBoolean("high_pass_filter", true))
+    val highPassFilterEnabled: StateFlow<Boolean> = _highPassFilterEnabled.asStateFlow()
+
+    private val _audioModeVoip = MutableStateFlow(prefs.getBoolean("audio_mode_voip", true))
+    val audioModeVoip: StateFlow<Boolean> = _audioModeVoip.asStateFlow()
+
+    private val _isVolumeBoostEnabled = MutableStateFlow(prefs.getBoolean("volume_boost", false))
+    val isVolumeBoostEnabled: StateFlow<Boolean> = _isVolumeBoostEnabled.asStateFlow()
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             Log.d(TAG, "Service connected to ViewModel")
             val binder = service as IntercomService.LocalBinder
-            intercomService = binder.getService()
+            val srv = binder.getService()
+            intercomService = srv
             _isServiceBound.value = true
+
+            // Set the audio mode immediately when bound
+            srv.setAudioModeVoip(_audioModeVoip.value)
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -112,6 +148,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearSharedTrack() {
         intercomService?.intercomClient?.clearSharedTrack()
+    }
+
+    // Audio modification functions
+    fun setVoiceVolume(volume: Int) {
+        _voiceVolume.value = volume
+        try {
+            audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, volume, 0)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting voice volume", e)
+        }
+    }
+
+    fun setMusicVolume(volume: Int) {
+        _musicVolume.value = volume
+        try {
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting music volume", e)
+        }
+    }
+
+    fun setNoiseSuppressionEnabled(enabled: Boolean) {
+        _noiseSuppressionEnabled.value = enabled
+        prefs.edit().putBoolean("noise_suppression", enabled).apply()
+    }
+
+    fun setEchoCancellationEnabled(enabled: Boolean) {
+        _echoCancellationEnabled.value = enabled
+        prefs.edit().putBoolean("echo_cancellation", enabled).apply()
+    }
+
+    fun setAutoGainControlEnabled(enabled: Boolean) {
+        _autoGainControlEnabled.value = enabled
+        prefs.edit().putBoolean("auto_gain_control", enabled).apply()
+    }
+
+    fun setHighPassFilterEnabled(enabled: Boolean) {
+        _highPassFilterEnabled.value = enabled
+        prefs.edit().putBoolean("high_pass_filter", enabled).apply()
+    }
+
+    fun setAudioModeVoip(useVoip: Boolean) {
+        _audioModeVoip.value = useVoip
+        prefs.edit().putBoolean("audio_mode_voip", useVoip).apply()
+        intercomService?.setAudioModeVoip(useVoip)
+    }
+
+    fun setVolumeBoostEnabled(enabled: Boolean) {
+        _isVolumeBoostEnabled.value = enabled
+        prefs.edit().putBoolean("volume_boost", enabled).apply()
+        if (enabled) {
+            // Force maximum volume on streams to bypass low background volume issues
+            setVoiceVolume(maxVoiceVolume)
+            setMusicVolume(maxMusicVolume)
+        }
+    }
+
+    fun refreshVolumes() {
+        _voiceVolume.value = audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+        _musicVolume.value = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
     }
 
     companion object {

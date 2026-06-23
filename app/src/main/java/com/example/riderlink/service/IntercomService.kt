@@ -119,9 +119,29 @@ class IntercomService : Service() {
 
     fun connectToRoom(url: String, token: String, code: String) {
         _roomCode.value = code
+        val prefs = getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
+        val noiseSuppression = prefs.getBoolean("noise_suppression", true)
+        val echoCancellation = prefs.getBoolean("echo_cancellation", true)
+        val autoGainControl = prefs.getBoolean("auto_gain_control", true)
+        val highPassFilter = prefs.getBoolean("high_pass_filter", true)
+        val useVoip = prefs.getBoolean("audio_mode_voip", true)
+
+        audioRouter.setAudioModeVoip(useVoip)
+
         serviceScope.launch {
-            intercomClient.connect(url, token)
+            intercomClient.connect(
+                url = url,
+                token = token,
+                noiseSuppression = noiseSuppression,
+                echoCancellation = echoCancellation,
+                autoGainControl = autoGainControl,
+                highPassFilter = highPassFilter
+            )
         }
+    }
+
+    fun setAudioModeVoip(useVoip: Boolean) {
+        audioRouter.setAudioModeVoip(useVoip)
     }
 
     fun setAutoPauseEnabled(enabled: Boolean) {

@@ -20,6 +20,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -94,6 +96,8 @@ fun MainScreen(
     val localTrack by mainViewModel.localTrack.collectAsStateWithLifecycle()
     val sharedTrack by mainViewModel.sharedTrack.collectAsStateWithLifecycle()
     val isAutoPauseEnabled by mainViewModel.isAutoPauseEnabled.collectAsStateWithLifecycle()
+
+    var isSettingsOpen by remember { mutableStateOf(false) }
 
     var permissionsGranted by remember {
         mutableStateOf(
@@ -188,6 +192,41 @@ fun MainScreen(
                 ) {
                     CircularProgressIndicator(color = AccentBlue, strokeWidth = 3.dp)
                 }
+            }
+
+            // Glowing glassmorphic Gear button for settings overlay (top right)
+            IconButton(
+                onClick = {
+                    mainViewModel.refreshVolumes()
+                    isSettingsOpen = true
+                },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 16.dp, end = 16.dp)
+                    .size(48.dp)
+                    .background(CardOverlay, CircleShape)
+                    .border(0.5.dp, BorderGrey, CircleShape)
+            ) {
+                Text("⚙️", fontSize = 20.sp)
+            }
+
+            // Animated Settings Panel
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isSettingsOpen,
+                enter = androidx.compose.animation.slideInVertically(
+                    initialOffsetY = { it },
+                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing)
+                ),
+                exit = androidx.compose.animation.slideOutVertically(
+                    targetOffsetY = { it },
+                    animationSpec = tween(durationMillis = 300, easing = LinearOutSlowInEasing)
+                ),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                SettingsPanel(
+                    viewModel = mainViewModel,
+                    onClose = { isSettingsOpen = false }
+                )
             }
 
             error?.let { errMessage ->
@@ -1167,5 +1206,313 @@ fun DigitCodeInput(
                 }
             }
         )
+    }
+}
+
+@Composable
+fun SettingsPanel(
+    viewModel: MainViewModel,
+    onClose: () -> Unit
+) {
+    val voiceVolume by viewModel.voiceVolume.collectAsStateWithLifecycle()
+    val musicVolume by viewModel.musicVolume.collectAsStateWithLifecycle()
+    val noiseSuppression by viewModel.noiseSuppressionEnabled.collectAsStateWithLifecycle()
+    val echoCancellation by viewModel.echoCancellationEnabled.collectAsStateWithLifecycle()
+    val autoGainControl by viewModel.autoGainControlEnabled.collectAsStateWithLifecycle()
+    val highPassFilter by viewModel.highPassFilterEnabled.collectAsStateWithLifecycle()
+    val audioModeVoip by viewModel.audioModeVoip.collectAsStateWithLifecycle()
+    val isVolumeBoostEnabled by viewModel.isVolumeBoostEnabled.collectAsStateWithLifecycle()
+    val isAutoPause by viewModel.isAutoPauseEnabled.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(SpaceBlack.copy(alpha = 0.85f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onClose() }
+    ) {
+        Spacer(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(300.dp)
+                .graphicsLayer(alpha = 0.12f)
+                .align(Alignment.BottomCenter)
+                .drawWithCache {
+                    val brush = Brush.radialGradient(
+                        colors = listOf(AccentCyan, Color.Transparent),
+                        center = Offset(size.width / 2, size.height),
+                        radius = size.width * 0.8f
+                    )
+                    onDrawBehind {
+                        drawCircle(brush = brush, center = Offset(size.width / 2, size.height), radius = size.width * 0.8f)
+                    }
+                }
+        )
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .fillMaxHeight(0.85f)
+                .glassCard(cornerRadius = 24.dp)
+                .background(DeepGrey.copy(alpha = 0.9f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { /* prevent close */ }
+                .padding(24.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "AUDIO CONFIGURATION",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AccentBlue,
+                        letterSpacing = 2.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Rider & Intercom Tuning",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Light,
+                        color = Color.White
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .background(CardOverlay, CircleShape)
+                        .border(0.5.dp, BorderGrey, CircleShape)
+                        .clickable { onClose() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("✕", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                SettingsSectionHeader(title = "VOLUME CONTROLS")
+
+                VolumeSliderItem(
+                    label = "Intercom Voice Volume",
+                    value = voiceVolume,
+                    maxValue = viewModel.maxVoiceVolume,
+                    onValueChange = { viewModel.setVoiceVolume(it) },
+                    icon = "🗣️",
+                    enabled = !isVolumeBoostEnabled
+                )
+
+                VolumeSliderItem(
+                    label = "Background Music Volume",
+                    value = musicVolume,
+                    maxValue = viewModel.maxMusicVolume,
+                    onValueChange = { viewModel.setMusicVolume(it) },
+                    icon = "🎵",
+                    enabled = !isVolumeBoostEnabled
+                )
+
+                SettingsSwitchItem(
+                    title = "⚡ Extreme Volume Boost",
+                    description = "Bypasses normal limits and forces maximum output. Use for heavy wind or exhaust noise.",
+                    checked = isVolumeBoostEnabled,
+                    onCheckedChange = { viewModel.setVolumeBoostEnabled(it) },
+                    accentColor = SafetyOrange
+                )
+
+                Divider(color = BorderGrey, thickness = 0.5.dp)
+
+                SettingsSectionHeader(title = "AUDIO ROUTING")
+
+                SettingsSwitchItem(
+                    title = "VoIP Routing Mode",
+                    description = "Enabled (VoIP): Full-duplex voice & helmet mic.\nDisabled (Media Mode): High fidelity stereo music, captures microphone audio via the phone.",
+                    checked = audioModeVoip,
+                    onCheckedChange = { viewModel.setAudioModeVoip(it) }
+                )
+
+                Divider(color = BorderGrey, thickness = 0.5.dp)
+
+                SettingsSectionHeader(title = "INTELLIGENT NOISE FILTERING & DSP")
+
+                SettingsSwitchItem(
+                    title = "💨 Wind Noise High-Pass Filter",
+                    description = "Cuts low-frequency rumble and heavy wind turbulence under the helmet.",
+                    checked = highPassFilter,
+                    onCheckedChange = { viewModel.setHighPassFilterEnabled(it) }
+                )
+
+                SettingsSwitchItem(
+                    title = "🚗 Exhaust Noise Suppression",
+                    description = "Uses WebRTC voice isolation algorithms to remove loud exhaust notes and background hums.",
+                    checked = noiseSuppression,
+                    onCheckedChange = { viewModel.setNoiseSuppressionEnabled(it) }
+                )
+
+                SettingsSwitchItem(
+                    title = "🔄 Acoustic Echo Cancellation",
+                    description = "Suppresses feedback and echo when using speakerphones or open helmet configurations.",
+                    checked = echoCancellation,
+                    onCheckedChange = { viewModel.setEchoCancellationEnabled(it) }
+                )
+
+                SettingsSwitchItem(
+                    title = "📈 Intelligent Auto-Gain Control",
+                    description = "Dynamically boosts quiet speech and caps loud outbursts so voice levels stay balanced.",
+                    checked = autoGainControl,
+                    onCheckedChange = { viewModel.setAutoGainControlEnabled(it) }
+                )
+
+                Divider(color = BorderGrey, thickness = 0.5.dp)
+
+                SettingsSectionHeader(title = "MUSIC COEXISTENCE")
+
+                SettingsSwitchItem(
+                    title = "Auto-Pause Music on Speech",
+                    description = "Automatically pauses Spotify/Apple Music when any rider speaks, resuming when speech stops. If disabled, music mixes continuously in background.",
+                    checked = isAutoPause,
+                    onCheckedChange = { viewModel.setAutoPauseEnabled(it) }
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsSectionHeader(title: String) {
+    Text(
+        text = title,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        color = Color.White.copy(alpha = 0.4f),
+        letterSpacing = 1.5.sp,
+        modifier = Modifier.padding(bottom = 4.dp)
+    )
+}
+
+@Composable
+fun VolumeSliderItem(
+    label: String,
+    value: Int,
+    maxValue: Int,
+    onValueChange: (Int) -> Unit,
+    icon: String,
+    enabled: Boolean
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassCard()
+            .background(Color.White.copy(alpha = if (enabled) 0.02f else 0.01f))
+            .padding(16.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = icon, fontSize = 16.sp)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = label,
+                        color = if (enabled) Color.White else Color.White.copy(alpha = 0.4f),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Text(
+                    text = if (enabled) "$value / $maxValue" else "BOOSTED MAX",
+                    color = if (enabled) AccentCyan else SafetyOrange,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Slider(
+                value = value.toFloat(),
+                onValueChange = { onValueChange(it.toInt()) },
+                valueRange = 0f..maxValue.toFloat(),
+                steps = if (maxValue > 1) maxValue - 1 else 0,
+                enabled = enabled,
+                colors = SliderDefaults.colors(
+                    thumbColor = if (enabled) AccentBlue else SafetyOrange,
+                    activeTrackColor = if (enabled) AccentBlue else SafetyOrange,
+                    inactiveTrackColor = BorderGrey,
+                    disabledThumbColor = SafetyOrange.copy(alpha = 0.5f),
+                    disabledActiveTrackColor = SafetyOrange.copy(alpha = 0.5f)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+fun SettingsSwitchItem(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    accentColor: Color = AccentBlue
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassCard()
+            .background(Color.White.copy(alpha = 0.02f))
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1.5f)) {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = description,
+                    color = MutedText,
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp
+                )
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = SpaceBlack,
+                    checkedTrackColor = accentColor,
+                    uncheckedThumbColor = MutedText,
+                    uncheckedTrackColor = DeepGrey,
+                    uncheckedBorderColor = BorderGrey
+                )
+            )
+        }
     }
 }

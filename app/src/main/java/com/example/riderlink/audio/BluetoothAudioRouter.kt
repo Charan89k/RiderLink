@@ -90,13 +90,24 @@ class BluetoothAudioRouter(private val context: Context) {
         }
     }
 
+    private var preferredAudioMode = AudioManager.MODE_IN_COMMUNICATION
+
+    fun setAudioModeVoip(useVoip: Boolean) {
+        val newMode = if (useVoip) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
+        preferredAudioMode = newMode
+        if (isRoutingStarted) {
+            audioManager.mode = newMode
+            Log.d(TAG, "Dynamic audio mode updated to: $newMode")
+        }
+    }
+
     fun start() {
         if (isRoutingStarted) return
         isRoutingStarted = true
-        Log.d(TAG, "Starting Bluetooth audio routing")
+        Log.d(TAG, "Starting Bluetooth audio routing with mode: $preferredAudioMode")
 
-        // Force MODE_IN_COMMUNICATION for VoIP optimization
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        // Set the preferred audio mode (VoIP or Normal)
+        audioManager.mode = preferredAudioMode
 
         // Request shared/ducked transient focus to allow simultaneous music playback
         requestAudioFocus(exclusive = false)
