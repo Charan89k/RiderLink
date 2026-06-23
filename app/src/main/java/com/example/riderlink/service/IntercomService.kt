@@ -110,6 +110,9 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
                     } else if (keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS) {
                         handleMediaPreviousClick()
                         return true
+                    } else if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+                        handleMediaPlayPauseClick()
+                        return true
                     }
                     return super.onMediaButtonEvent(mediaButtonIntent)
                 }
@@ -420,6 +423,40 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
                 prevClickCount = 0
                 dispatchMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
             }
+        }
+    }
+
+    private var playPauseClickJob: kotlinx.coroutines.Job? = null
+    private var playPauseClickCount = 0
+
+    private fun handleMediaPlayPauseClick() {
+        playPauseClickCount++
+        Log.d(TAG, "handleMediaPlayPauseClick count = $playPauseClickCount")
+        
+        if (playPauseClickCount == 1) {
+            playPauseClickJob = serviceScope.launch {
+                kotlinx.coroutines.delay(800)
+                val clicks = playPauseClickCount
+                playPauseClickCount = 0
+                Log.d(TAG, "Play/Pause click window expired. Clicks: $clicks")
+                repeat(clicks) { index ->
+                    dispatchMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+                    if (clicks > 1 && index < clicks - 1) {
+                        kotlinx.coroutines.delay(150)
+                    }
+                }
+            }
+        } else if (playPauseClickCount >= 3) {
+            playPauseClickJob?.cancel()
+            playPauseClickCount = 0
+            
+            val currentMute = intercomClient.isMuted.value
+            val newMuteState = !currentMute
+            intercomClient.setMute(newMuteState)
+            
+            val announcement = if (newMuteState) "Microphone Muted" else "Microphone Active"
+            speakTts(announcement)
+            Log.d(TAG, "Triple play/pause click detected. Mute state toggled to: $newMuteState")
         }
     }
 
