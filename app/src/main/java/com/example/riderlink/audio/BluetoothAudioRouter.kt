@@ -15,6 +15,11 @@ import androidx.core.content.ContextCompat
 
 import android.media.AudioFocusRequest
 import android.media.AudioAttributes
+import com.example.riderlink.domain.model.AudioRoute
+import com.example.riderlink.domain.model.AudioRouteType
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class BluetoothAudioRouter(private val context: Context) {
 
@@ -22,6 +27,15 @@ class BluetoothAudioRouter(private val context: Context) {
     private var isRoutingStarted = false
     private var activeFocusRequest: AudioFocusRequest? = null
     private var isFocusExclusive = false
+
+    /**
+     * Where audio is actually going right now.
+     *
+     * A rider cannot tell a silent intercom from one playing into the phone's
+     * earpiece inside a pocket, so this has to be visible on screen.
+     */
+    private val _audioRoute = MutableStateFlow(AudioRoute())
+    val audioRoute: StateFlow<AudioRoute> = _audioRoute.asStateFlow()
 
     private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         Log.d(TAG, "Audio focus changed callback: $focusChange")
@@ -121,7 +135,7 @@ class BluetoothAudioRouter(private val context: Context) {
             @Suppress("DEPRECATION")
             addAction(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
         }
-        context.registerReceiver(bluetoothReceiver, filter)
+        ContextCompat.registerReceiver(context, bluetoothReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
 
         // Initial update
         updateAudioRoute()
@@ -152,6 +166,7 @@ class BluetoothAudioRouter(private val context: Context) {
         }
 
         audioManager.mode = AudioManager.MODE_NORMAL
+        _audioRoute.value = AudioRoute()
     }
 
     fun updateAudioRoute() {
@@ -175,9 +190,14 @@ class BluetoothAudioRouter(private val context: Context) {
             if (bluetoothDevice != null) {
                 val result = audioManager.setCommunicationDevice(bluetoothDevice)
                 Log.d(TAG, "Routing to Bluetooth device: ${bluetoothDevice.productName}, type: ${bluetoothDevice.type}, success: $result")
+                _audioRoute.value = AudioRoute(
+                    type = AudioRouteType.BLUETOOTH_HEADSET,
+                    deviceName = bluetoothDevice.productName?.toString()?.takeIf { it.isNotBlank() }
+                )
             } else {
                 Log.d(TAG, "No Bluetooth communication device found, clearing route to use default")
                 audioManager.clearCommunicationDevice()
+                _audioRoute.value = AudioRoute(type = classifyFallbackRoute(devices))
             }
         } else {
             // Deprecated fallback for older APIs
@@ -189,6 +209,23 @@ class BluetoothAudioRouter(private val context: Context) {
                 @Suppress("DEPRECATION")
                 audioManager.isBluetoothScoOn = true
             }
+            val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            val bluetooth = devices.find { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+            _audioRoute.value = if (bluetooth != null) {
+                AudioRoute(AudioRouteType.BLUETOOTH_HEADSET, bluetooth.productName?.toString())
+            } else {
+                AudioRoute(classifyFallbackRoute(devices))
+            }
         }
+    }
+
+    /** Wired headset beats the phone speaker when no helmet is present. */
+    private fun classifyFallbackRoute(devices: Array<AudioDeviceInfo>): AudioRouteType {
+        val wired = devices.any {
+            it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+        }
+        return if (wired) AudioRouteType.WIRED_HEADSET else AudioRouteType.PHONE
     }
 }

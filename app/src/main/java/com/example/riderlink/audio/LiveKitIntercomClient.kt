@@ -11,6 +11,9 @@ import io.livekit.android.events.RoomEvent
 import io.livekit.android.room.track.LocalAudioTrackOptions
 import io.livekit.android.room.track.DataPublishReliability
 import io.livekit.android.room.track.RemoteTrackPublication
+import com.example.riderlink.domain.model.ConnectionStatus
+import com.example.riderlink.domain.model.Rider
+import com.example.riderlink.domain.model.RiderState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,8 +35,26 @@ class LiveKitIntercomClient(private val context: Context) {
     private val _connectionState = MutableStateFlow(Room.State.DISCONNECTED)
     val connectionState: StateFlow<Room.State> = _connectionState.asStateFlow()
 
-    private val _participants = MutableStateFlow<List<String>>(emptyList())
-    val participants: StateFlow<List<String>> = _participants.asStateFlow()
+    /** The state the UI renders. Never derived from the existence of a Room object. */
+    private val _connectionStatus = MutableStateFlow(ConnectionStatus.IDLE)
+    val connectionStatus: StateFlow<ConnectionStatus> = _connectionStatus.asStateFlow()
+
+    private val _riders = MutableStateFlow<List<Rider>>(emptyList())
+    val riders: StateFlow<List<Rider>> = _riders.asStateFlow()
+
+    /** Set when a disconnect was not requested by the rider, so callers can retry. */
+    private val _lastFailure = MutableStateFlow<String?>(null)
+    val lastFailure: StateFlow<String?> = _lastFailure.asStateFlow()
+
+    /** Distinguishes "the rider hung up" from "the link died". */
+    private var disconnectRequested = false
+
+    /**
+     * Raised when LiveKit's own reconnection has given up and the session needs
+     * to be rebuilt from outside, with a fresh token. The service watches this.
+     */
+    private val _sessionLost = MutableStateFlow(false)
+    val sessionLost: StateFlow<Boolean> = _sessionLost.asStateFlow()
 
     private val _isMuted = MutableStateFlow(false)
     val isMuted: StateFlow<Boolean> = _isMuted.asStateFlow()
@@ -67,6 +88,10 @@ class LiveKitIntercomClient(private val context: Context) {
         useVoip: Boolean = true
     ) {
         disconnect() // Clean up any existing connection
+        disconnectRequested = false
+        _sessionLost.value = false
+        _connectionStatus.value = ConnectionStatus.CONNECTING
+        _lastFailure.value = null
         
         Log.d(TAG, "Connecting to LiveKit room at $url (noiseSuppression=$noiseSuppression, echoCancellation=$echoCancellation, AGC=$autoGainControl, HPF=$highPassFilter, useVoip=$useVoip)")
 
@@ -105,19 +130,44 @@ class LiveKitIntercomClient(private val context: Context) {
             currentRoom.events.collect { event ->
                 Log.d(TAG, "LiveKit room event: $event")
                 when (event) {
-                    is RoomEvent.Connected,
-                    is RoomEvent.Disconnected,
-                    is RoomEvent.Reconnecting,
+                    is RoomEvent.Connected -> {
+                        _connectionState.value = currentRoom.state
+                        _connectionStatus.value = ConnectionStatus.CONNECTED
+                        _lastFailure.value = null
+                        _sessionLost.value = false
+                        updateParticipants()
+                    }
+                    is RoomEvent.Reconnecting -> {
+                        _connectionState.value = currentRoom.state
+                        _connectionStatus.value = ConnectionStatus.RECONNECTING
+                        updateParticipants()
+                    }
                     is RoomEvent.Reconnected -> {
                         _connectionState.value = currentRoom.state
+                        _connectionStatus.value = ConnectionStatus.CONNECTED
+                        _lastFailure.value = null
+                        _sessionLost.value = false
                         updateParticipants()
-                        if (currentRoom.state == Room.State.DISCONNECTED) {
-                            _isSomeoneSpeaking.value = false
-                            _isRemoteSpeaking.value = false
-                            _activeSpeaker.value = null
-                            _sharedTrack.value = null
-                            privateChatParticipantIdentity = null
+                    }
+                    is RoomEvent.Disconnected -> {
+                        _connectionState.value = currentRoom.state
+                        // A disconnect the rider did not ask for is a failure the
+                        // session supervisor should try to recover from.
+                        if (disconnectRequested) {
+                            _connectionStatus.value = ConnectionStatus.DISCONNECTED
+                        } else {
+                            // LiveKit only emits Disconnected after its own retries
+                            // have failed, so from here recovery is our problem.
+                            _lastFailure.value = event.error?.message ?: "Connection lost"
+                            _connectionStatus.value = ConnectionStatus.RECONNECTING
+                            _sessionLost.value = true
                         }
+                        _isSomeoneSpeaking.value = false
+                        _isRemoteSpeaking.value = false
+                        _activeSpeaker.value = null
+                        _sharedTrack.value = null
+                        privateChatParticipantIdentity = null
+                        updateParticipants()
                     }
                     is RoomEvent.ParticipantConnected -> {
                         updateParticipants()
@@ -133,6 +183,12 @@ class LiveKitIntercomClient(private val context: Context) {
                         }
                     }
                     is RoomEvent.ParticipantDisconnected -> {
+                        updateParticipants()
+                    }
+                    is RoomEvent.TrackMuted,
+                    is RoomEvent.TrackUnmuted -> {
+                        // Without this the roster would keep showing "Connected" for
+                        // a rider who has muted themselves.
                         updateParticipants()
                     }
                     is RoomEvent.TrackPublished -> {
@@ -167,7 +223,7 @@ class LiveKitIntercomClient(private val context: Context) {
                         
                         val primarySpeaker = speakers.firstOrNull()?.identity?.value
                         _activeSpeaker.value = primarySpeaker
-                        Log.d(TAG, "Active speakers: ${speakers.map { it.identity?.value }}")
+                        updateParticipants()
                     }
                     is RoomEvent.DataReceived -> {
                         val payload = event.data.toString(Charsets.UTF_8)
@@ -191,6 +247,7 @@ class LiveKitIntercomClient(private val context: Context) {
             currentRoom.connect(url, token)
             Log.d(TAG, "Successfully connected to LiveKit room")
             _connectionState.value = currentRoom.state
+            _connectionStatus.value = ConnectionStatus.CONNECTED
             
             // Enable microphone by default and configure voice processing
             currentRoom.localParticipant.setMicrophoneEnabled(true)
@@ -200,6 +257,8 @@ class LiveKitIntercomClient(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to connect to LiveKit room", e)
             _connectionState.value = Room.State.DISCONNECTED
+            _connectionStatus.value = ConnectionStatus.ERROR
+            _lastFailure.value = e.message
             throw e
         }
     }
@@ -209,6 +268,7 @@ class LiveKitIntercomClient(private val context: Context) {
         clientScope.launch {
             currentRoom.localParticipant.setMicrophoneEnabled(!muted)
             _isMuted.value = muted
+            updateParticipants()
             Log.d(TAG, "Mute state updated: $muted")
         }
     }
@@ -239,7 +299,11 @@ class LiveKitIntercomClient(private val context: Context) {
     }
 
     fun disconnect() {
-        val currentRoom = room ?: return
+        disconnectRequested = true
+        val currentRoom = room ?: run {
+            _connectionStatus.value = ConnectionStatus.IDLE
+            return
+        }
         Log.d(TAG, "Disconnecting from LiveKit room")
         clientScope.launch {
             try {
@@ -249,10 +313,15 @@ class LiveKitIntercomClient(private val context: Context) {
             }
             room = null
             _connectionState.value = Room.State.DISCONNECTED
-            _participants.value = emptyList()
+            _connectionStatus.value = ConnectionStatus.IDLE
+            _riders.value = emptyList()
             _isMuted.value = false
             _isSomeoneSpeaking.value = false
+            _isRemoteSpeaking.value = false
+            _activeSpeaker.value = null
             _sharedTrack.value = null
+            _lastFailure.value = null
+            _sessionLost.value = false
         }
     }
 
@@ -269,6 +338,7 @@ class LiveKitIntercomClient(private val context: Context) {
                 remotePub?.setSubscribed(isTarget)
             }
         }
+        updateParticipants()
         Log.d(TAG, "Isolated participant: $targetIdentity")
     }
 
@@ -282,24 +352,64 @@ class LiveKitIntercomClient(private val context: Context) {
                 remotePub?.setSubscribed(true)
             }
         }
+        updateParticipants()
         Log.d(TAG, "Returned to group intercom, unmuted all participant streams")
     }
 
+    /**
+     * Rebuilds the rider roster from the room's current state.
+     *
+     * Called on every event that can change what a rider's row should say, so the
+     * list is always a snapshot of reality rather than an accumulated guess.
+     */
     private fun updateParticipants() {
-        val currentRoom = room ?: return
-        val list = mutableListOf<String>()
-        // Include local participant if connected
-        if (currentRoom.state == Room.State.CONNECTED) {
+        val currentRoom = room
+        if (currentRoom == null) {
+            _riders.value = emptyList()
+            return
+        }
+
+        val reconnecting = currentRoom.state == Room.State.RECONNECTING
+        val privateTarget = privateChatParticipantIdentity
+        val speakerIdentity = _activeSpeaker.value
+        val roster = mutableListOf<Rider>()
+
+        if (currentRoom.state != Room.State.DISCONNECTED) {
             val localIdentity = currentRoom.localParticipant.identity?.value ?: "Me"
-            list.add("$localIdentity (Me)")
+            roster += Rider(
+                identity = localIdentity,
+                displayName = currentRoom.localParticipant.name?.takeIf { it.isNotBlank() } ?: localIdentity,
+                isLocal = true,
+                state = when {
+                    reconnecting -> RiderState.RECONNECTING
+                    _isMuted.value -> RiderState.MUTED
+                    speakerIdentity == localIdentity -> RiderState.SPEAKING
+                    else -> RiderState.CONNECTED
+                }
+            )
         }
-        // Include remote participants
+
         currentRoom.remoteParticipants.forEach { (_, participant) ->
-            val identity = participant.identity?.value ?: "Rider"
-            list.add(identity)
+            val identity = participant.identity?.value ?: return@forEach
+            val muted = participant.audioTrackPublications
+                .mapNotNull { it.first as? RemoteTrackPublication }
+                .let { pubs -> pubs.isNotEmpty() && pubs.all { it.muted } }
+
+            roster += Rider(
+                identity = identity,
+                displayName = participant.name?.takeIf { it.isNotBlank() } ?: identity,
+                isLocal = false,
+                state = when {
+                    reconnecting -> RiderState.RECONNECTING
+                    privateTarget == identity -> RiderState.PRIVATE
+                    speakerIdentity == identity -> RiderState.SPEAKING
+                    muted -> RiderState.MUTED
+                    else -> RiderState.CONNECTED
+                }
+            )
         }
-        _participants.value = list
-        Log.d(TAG, "Updated participants: $list")
+
+        _riders.value = roster
     }
 }
 

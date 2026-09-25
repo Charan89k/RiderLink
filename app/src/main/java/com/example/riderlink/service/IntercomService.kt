@@ -20,16 +20,23 @@ import android.media.session.PlaybackState
 import android.speech.tts.TextToSpeech
 import androidx.core.app.NotificationCompat
 import com.example.riderlink.MainActivity
+import com.example.riderlink.R
 import com.example.riderlink.audio.BluetoothAudioRouter
 import com.example.riderlink.audio.LiveKitIntercomClient
+import com.example.riderlink.audio.TokenService
 import com.example.riderlink.audio.TrackInfo
+import com.example.riderlink.data.NetworkMonitor
+import com.example.riderlink.domain.ReconnectPolicy
+import com.example.riderlink.domain.model.ConnectionStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -39,6 +46,9 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
     private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
 
     private lateinit var audioRouter: BluetoothAudioRouter
+
+    /** Where intercom audio is going, for the helmet indicator. */
+    val audioRoute get() = audioRouter.audioRoute
     lateinit var intercomClient: LiveKitIntercomClient
         private set
 
@@ -48,6 +58,27 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
 
     private val _roomCode = MutableStateFlow<String?>(null)
     val roomCode: StateFlow<String?> = _roomCode.asStateFlow()
+
+    /**
+     * Everything needed to rebuild the session after a drop. Held by the service
+     * rather than the ViewModel because the ride outlives the Activity.
+     */
+    private data class RideSession(
+        val tokenServerUrl: String,
+        val roomCode: String,
+        val identity: String
+    )
+
+    private var session: RideSession? = null
+    private var reconnectJob: kotlinx.coroutines.Job? = null
+    private lateinit var networkMonitor: NetworkMonitor
+
+    /** Surfaced so the dashboard can show which attempt is in flight. */
+    private val _reconnectAttempt = MutableStateFlow(0)
+    val reconnectAttempt: StateFlow<Int> = _reconnectAttempt.asStateFlow()
+
+    private val _sessionError = MutableStateFlow<String?>(null)
+    val sessionError: StateFlow<String?> = _sessionError.asStateFlow()
 
     val isAutoPauseEnabled = MutableStateFlow(false)
     val localTrack = MutableStateFlow<TrackInfo?>(null)
@@ -82,6 +113,7 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "Creating IntercomService")
         audioRouter = BluetoothAudioRouter(this)
         intercomClient = LiveKitIntercomClient(this)
+        networkMonitor = NetworkMonitor(this)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         maxMusicVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
 
@@ -162,6 +194,13 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
+        // Rebuild the session whenever LiveKit's own retries have run out.
+        serviceScope.launch {
+            intercomClient.sessionLost.collect { lost ->
+                if (lost) startReconnectLoop() else cancelReconnectLoop()
+            }
+        }
+
         // Capture metadata changes from the Notification Listener Service
         IntercomNotificationListenerService.onMetadataChangedListener = { title, artist ->
             Log.d(TAG, "Notification listener track change: $title by $artist")
@@ -196,28 +235,103 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
         return START_NOT_STICKY
     }
 
-    fun connectToRoom(url: String, token: String, code: String) {
-        _roomCode.value = code
-        val prefs = getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
-        val noiseSuppression = prefs.getBoolean("noise_suppression", true)
-        val echoCancellation = prefs.getBoolean("echo_cancellation", true)
-        val autoGainControl = prefs.getBoolean("auto_gain_control", true)
-        val highPassFilter = prefs.getBoolean("high_pass_filter", true)
-        val useVoip = prefs.getBoolean("audio_mode_voip", true)
-
-        audioRouter.setAudioModeVoip(useVoip)
+    /**
+     * Starts a ride and keeps it alive.
+     *
+     * The service, not the ViewModel, fetches the access token: it is the only
+     * component that survives the Activity, so it is the only one that can
+     * re-authenticate after a drop halfway through a ride.
+     */
+    fun startRide(tokenServerUrl: String, roomCode: String, identity: String) {
+        session = RideSession(tokenServerUrl, roomCode, identity)
+        _roomCode.value = roomCode
+        _sessionError.value = null
+        _reconnectAttempt.value = 0
 
         serviceScope.launch {
-            intercomClient.connect(
-                url = url,
-                token = token,
-                noiseSuppression = noiseSuppression,
-                echoCancellation = echoCancellation,
-                autoGainControl = autoGainControl,
-                highPassFilter = highPassFilter,
-                useVoip = useVoip
-            )
+            runCatching { openConnection() }
+                .onFailure { error ->
+                    Log.e(TAG, "Initial connection failed", error)
+                    _sessionError.value = friendlyError(error)
+                }
         }
+    }
+
+    /** Fetches a fresh token and opens the room with the rider's saved audio settings. */
+    private suspend fun openConnection() {
+        val active = session ?: error("No ride session")
+        val prefs = getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
+        val useVoip = prefs.getBoolean("audio_mode_voip", true)
+        audioRouter.setAudioModeVoip(useVoip)
+
+        val credentials = TokenService.fetchCredentials(
+            tokenServerUrl = active.tokenServerUrl,
+            roomCode = active.roomCode,
+            identity = active.identity
+        )
+
+        intercomClient.connect(
+            url = credentials.serverUrl,
+            token = credentials.token,
+            noiseSuppression = prefs.getBoolean("noise_suppression", true),
+            echoCancellation = prefs.getBoolean("echo_cancellation", true),
+            autoGainControl = prefs.getBoolean("auto_gain_control", true),
+            highPassFilter = prefs.getBoolean("high_pass_filter", true),
+            useVoip = useVoip
+        )
+    }
+
+    /**
+     * Retries the connection with backoff for as long as the policy allows,
+     * waiting for the radio to come back rather than failing against a dead one.
+     */
+    private fun startReconnectLoop() {
+        if (reconnectJob?.isActive == true) return
+        if (session == null) return
+
+        reconnectJob = serviceScope.launch {
+            var attempt = 1
+            while (ReconnectPolicy.shouldRetry(attempt)) {
+                _reconnectAttempt.value = attempt
+                updateNotification()
+
+                delay(ReconnectPolicy.delayFor(attempt))
+
+                // No point dialling out with the radio down: wait for it.
+                networkMonitor.isOnline.first { it }
+
+                Log.d(TAG, "Reconnect attempt $attempt")
+                val result = runCatching { openConnection() }
+                if (result.isSuccess) {
+                    Log.d(TAG, "Reconnected on attempt $attempt")
+                    _reconnectAttempt.value = 0
+                    _sessionError.value = null
+                    updateNotification()
+                    return@launch
+                }
+                Log.w(TAG, "Reconnect attempt $attempt failed", result.exceptionOrNull())
+                attempt++
+            }
+
+            Log.e(TAG, "Giving up after ${ReconnectPolicy.MAX_ATTEMPTS} attempts")
+            _sessionError.value = "Could not restore the ride. Check your signal and rejoin."
+            _reconnectAttempt.value = 0
+            updateNotification()
+        }
+    }
+
+    private fun cancelReconnectLoop() {
+        reconnectJob?.cancel()
+        reconnectJob = null
+        _reconnectAttempt.value = 0
+    }
+
+    /** Turns an exception into something worth showing a rider at 80km/h. */
+    private fun friendlyError(error: Throwable): String = when {
+        error is java.net.UnknownHostException -> "No internet connection."
+        error is java.net.SocketTimeoutException -> "The token server did not respond."
+        error.message?.contains("Token server returned 4") == true -> "This ride code was rejected."
+        else -> "Could not join the ride. Please try again."
     }
 
     fun setAudioModeVoip(useVoip: Boolean) {
@@ -244,6 +358,9 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun disconnect() {
+        cancelReconnectLoop()
+        session = null
+        _sessionError.value = null
         intercomClient.disconnect()
         privateChatParticipantIdentity = null
         _privateChatParticipant.value = null
@@ -315,17 +432,29 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val roomCodeStr = _roomCode.value ?: "Unknown"
-        val statusText = if (intercomClient.isMuted.value) "Muted" else "Listening"
-        val muteText = if (intercomClient.isMuted.value) "Unmute" else "Mute"
+        val roomCodeStr = _roomCode.value ?: "—"
+        val muted = intercomClient.isMuted.value
+        val muteText = if (muted) "Unmute" else "Mute"
+
+        // The notification is often the only surface a rider sees, so it must
+        // never claim the intercom is live when it is not.
+        val attempt = _reconnectAttempt.value
+        val statusText = when (intercomClient.connectionStatus.value) {
+            ConnectionStatus.CONNECTING -> "Connecting…"
+            ConnectionStatus.RECONNECTING ->
+                if (attempt > 0) "Reconnecting (attempt $attempt)…" else "Reconnecting…"
+            ConnectionStatus.CONNECTED -> if (muted) "Muted" else "Listening"
+            ConnectionStatus.ERROR -> "Connection failed"
+            ConnectionStatus.DISCONNECTED, ConnectionStatus.IDLE -> "Disconnected"
+        }
 
         val track = localTrack.value
-        val trackText = if (track != null) " | 🎵 ${track.title} - ${track.artist}" else ""
+        val trackText = if (track != null) " · ♪ ${track.title}" else ""
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("RiderLink Active Intercom")
-            .setContentText("Room: $roomCodeStr | Status: $statusText$trackText")
-            .setSmallIcon(android.R.drawable.presence_online)
+            .setContentTitle("RiderLink · Ride $roomCodeStr")
+            .setContentText("$statusText$trackText")
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .addAction(android.R.drawable.ic_media_pause, muteText, mutePendingIntent)
@@ -499,6 +628,26 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
         intercomClient.isolateParticipant(name)
         speakTts("Private chat with $name")
     }
+
+    /**
+     * Opens a private channel with one specific rider, from a tap on the roster.
+     *
+     * The helmet-button gesture cycles through riders blind because there is no
+     * screen to look at; tapping a row is the deliberate version of the same thing.
+     */
+    fun startPrivateChatWith(identity: String) {
+        if (privateChatParticipantIdentity == identity) {
+            returnToGroupChat()
+            return
+        }
+        privateChatParticipantIdentity = identity
+        _privateChatParticipant.value = identity
+        intercomClient.isolateParticipant(identity)
+        speakTts("Private chat with $identity")
+    }
+
+    /** Public entry point for the dashboard's "back to group" control. */
+    fun returnToGroup() = returnToGroupChat()
 
     private fun returnToGroupChat() {
         if (privateChatParticipantIdentity == null) {

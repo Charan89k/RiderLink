@@ -10,22 +10,25 @@ import android.media.AudioManager
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.riderlink.audio.TokenService
 import com.example.riderlink.audio.TrackInfo
+import com.example.riderlink.domain.model.AudioRoute
+import com.example.riderlink.domain.model.ConnectionStatus
+import com.example.riderlink.domain.model.Rider
 import com.example.riderlink.firebase.FirebaseRoomRepository
 import com.example.riderlink.firebase.RoomDetails
 import com.example.riderlink.service.IntercomService
 import com.example.riderlink.Config
-import io.livekit.android.room.Room
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -96,18 +99,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Combine service flows and exposed view model states
-    val connectionState: StateFlow<Room.State> = _isServiceBound.flatMapLatest { bound ->
-        if (bound) intercomService?.intercomClient?.connectionState ?: flowOf(Room.State.DISCONNECTED)
-        else flowOf(Room.State.DISCONNECTED)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, Room.State.DISCONNECTED)
+    val connectionStatus: StateFlow<ConnectionStatus> = _isServiceBound.flatMapLatest { bound ->
+        if (bound) intercomService?.intercomClient?.connectionStatus ?: flowOf(ConnectionStatus.IDLE)
+        else flowOf(ConnectionStatus.IDLE)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, ConnectionStatus.IDLE)
+
+    val reconnectAttempt: StateFlow<Int> = _isServiceBound.flatMapLatest { bound ->
+        if (bound) intercomService?.reconnectAttempt ?: flowOf(0) else flowOf(0)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    val audioRoute: StateFlow<AudioRoute> = _isServiceBound.flatMapLatest { bound ->
+        if (bound) intercomService?.audioRoute ?: flowOf(AudioRoute()) else flowOf(AudioRoute())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, AudioRoute())
 
     val roomCode: StateFlow<String?> = _isServiceBound.flatMapLatest { bound ->
         if (bound) intercomService?.roomCode ?: flowOf(null)
         else flowOf(null)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    val participants: StateFlow<List<String>> = _isServiceBound.flatMapLatest { bound ->
-        if (bound) intercomService?.intercomClient?.participants ?: flowOf(emptyList())
+    val riders: StateFlow<List<Rider>> = _isServiceBound.flatMapLatest { bound ->
+        if (bound) intercomService?.intercomClient?.riders ?: flowOf(emptyList())
         else flowOf(emptyList())
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -142,7 +153,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+
+    /** Errors raised while joining, merged with errors raised mid-ride by the service. */
+    val error: StateFlow<String?> = combine(
+        _error,
+        _isServiceBound.flatMapLatest { bound ->
+            if (bound) intercomService?.sessionError ?: flowOf(null) else flowOf(null)
+        }
+    ) { local, fromService -> local ?: fromService }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -221,6 +240,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val TAG = "MainViewModel"
+        private const val CODE_LENGTH = 4
+        private const val SERVICE_BIND_TIMEOUT_MS = 5_000L
     }
 
     init {
@@ -236,70 +257,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _error.value = null
     }
 
+    /** Creates a new ride and joins it. */
     fun createRoom() {
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
             try {
-                // 1. Create Room document in Firebase/Simulation
-                val roomDetails = roomRepository.createRoom()
-
-                // 2. Ask the token server for a room-scoped token
-                val credentials = TokenService.fetchCredentials(
-                    tokenServerUrl = tokenServerUrl.value,
-                    roomCode = roomDetails.roomCode,
-                    identity = riderName.value
-                )
-
-                // 3. Start foreground service
-                startServiceForeground(roomDetails.roomCode)
-
-                // 4. Connect to Room
-                connectServiceToRoom(credentials.serverUrl, credentials.token, roomDetails.roomCode)
+                val room = roomRepository.createRoom()
+                beginRide(room.roomCode)
             } catch (e: Exception) {
-                Log.e(TAG, "Error creating room", e)
-                _error.value = "Failed to create room: ${e.message}"
+                Log.e(TAG, "Error creating ride", e)
+                _error.value = "Could not create the ride. Check your connection."
             } finally {
                 _isLoading.value = false
             }
         }
     }
 
+    /** Joins an existing ride by its 4-digit code. */
     fun joinRoom(code: String) {
-        if (code.length != 4) {
-            _error.value = "Room code must be exactly 4 digits"
+        val cleaned = code.trim()
+        if (cleaned.length != CODE_LENGTH || !cleaned.all { it.isDigit() }) {
+            _error.value = "Ride codes are $CODE_LENGTH digits."
             return
         }
         viewModelScope.launch {
             _isLoading.value = true
             _error.value = null
             try {
-                // 1. Query Room from Firebase/Simulation
-                val roomDetails = roomRepository.joinRoom(code)
-                if (roomDetails == null) {
-                    _error.value = "Room not found. Check the code."
+                val room = roomRepository.joinRoom(cleaned)
+                if (room == null) {
+                    _error.value = "No ride found with code $cleaned."
                     return@launch
                 }
-
-                // 2. Ask the token server for a room-scoped token
-                val credentials = TokenService.fetchCredentials(
-                    tokenServerUrl = tokenServerUrl.value,
-                    roomCode = roomDetails.roomCode,
-                    identity = riderName.value
-                )
-
-                // 3. Start foreground service
-                startServiceForeground(roomDetails.roomCode)
-
-                // 4. Connect to Room
-                connectServiceToRoom(credentials.serverUrl, credentials.token, roomDetails.roomCode)
+                beginRide(room.roomCode)
             } catch (e: Exception) {
-                Log.e(TAG, "Error joining room", e)
-                _error.value = "Failed to join room: ${e.message}"
+                Log.e(TAG, "Error joining ride", e)
+                _error.value = "Could not join the ride. Check your connection."
             } finally {
                 _isLoading.value = false
             }
         }
+    }
+
+    /**
+     * Hands the ride to the service, which owns it from here: it fetches the
+     * token, connects, and rebuilds the session if the link drops mid-ride.
+     */
+    private suspend fun beginRide(roomCode: String) {
+        startServiceForeground(roomCode)
+        awaitServiceBinding()
+        intercomService?.startRide(
+            tokenServerUrl = tokenServerUrl.value,
+            roomCode = roomCode,
+            identity = riderName.value
+        )
     }
 
     fun toggleMute() {
@@ -311,6 +323,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun disconnect() {
         intercomService?.disconnect()
+    }
+
+    /** Isolates one rider's audio. Tapping the same rider again returns to the group. */
+    fun startPrivateChat(identity: String) {
+        intercomService?.startPrivateChatWith(identity)
+    }
+
+    fun returnToGroup() {
+        intercomService?.returnToGroup()
     }
 
     private fun startServiceForeground(roomCode: String) {
@@ -325,14 +346,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun connectServiceToRoom(url: String, token: String, roomCode: String) {
-        viewModelScope.launch {
-            // Wait for service binding if needed
+    /**
+     * Waits for the service binding, which is asynchronous even though the
+     * service is started synchronously. Bounded so a failed bind surfaces as an
+     * error rather than hanging the join button forever.
+     */
+    private suspend fun awaitServiceBinding() {
+        withTimeoutOrNull(SERVICE_BIND_TIMEOUT_MS) {
             while (intercomService == null) {
-                kotlinx.coroutines.delay(100)
+                kotlinx.coroutines.delay(50)
             }
-            intercomService?.connectToRoom(url, token, roomCode)
-        }
+        } ?: throw IllegalStateException("Intercom service did not start")
     }
 
     override fun onCleared() {

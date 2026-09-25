@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Notification icon. Must be a flat white silhouette on transparent: Android
+  masks the shape and tints it, so any colour or gradient here is discarded.
+  A helmet profile with a signal arc.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3C7.58,3 4,6.58 4,11v4.5C4,16.33 4.67,17 5.5,17H8v-2H6v-4c0,-3.31 2.69,-6 6,-6s6,2.69 6,6v1h-3.5c-0.83,0 -1.5,0.67 -1.5,1.5v2c0,0.83 0.67,1.5 1.5,1.5H18c1.1,0 2,-0.9 2,-2v-4C20,6.58 16.42,3 12,3z"/>
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M9,18.5C9,19.88 10.12,21 11.5,21h4v-1.5h-4c-0.55,0 -1,-0.45 -1,-1H9z"/>
+</vector>
