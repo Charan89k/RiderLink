@@ -100,6 +100,7 @@ fun SecondaryAction(
     enabled: Boolean = true,
     borderColor: Color = HairlineStrong,
     contentColor: Color = TextPrimary,
+    minHeight: androidx.compose.ui.unit.Dp = GloveTargetHeight,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -112,7 +113,7 @@ fun SecondaryAction(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = GloveTargetHeight)
+            .heightIn(min = minHeight)
             .scale(scale)
             .clip(RoundedCornerShape(22.dp))
             .border(BorderStroke(1.dp, borderColor), RoundedCornerShape(22.dp))

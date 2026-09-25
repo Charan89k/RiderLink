@@ -1,6 +1,8 @@
 package com.example.riderlink.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
@@ -24,6 +26,27 @@ fun Modifier.clickableTarget(
         interactionSource = source,
         indication = ripple(color = Electric),
         enabled = enabled,
+        onClick = onClick,
+    )
+}
+
+/**
+ * Tap and long-press on one target, with the same accent ripple.
+ *
+ * Long-press chooses the private target without switching channel, so a rider
+ * can line up who volume-up will call before they set off.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+fun Modifier.combinedClickableTarget(
+    enabled: Boolean = true,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+): Modifier = composed {
+    combinedClickable(
+        interactionSource = remembered(),
+        indication = ripple(color = Electric),
+        enabled = enabled,
+        onLongClick = onLongClick,
         onClick = onClick,
     )
 }

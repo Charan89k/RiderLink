@@ -67,12 +67,14 @@ fun RideScreen(
     reconnectAttempt: Int,
     audioRoute: AudioRoute,
     privateChatWith: String?,
+    privateTarget: String?,
     localTrack: TrackInfo?,
     sharedTrack: TrackInfo?,
     error: String?,
     onDismissError: () -> Unit,
     onToggleMute: () -> Unit,
     onSelectRider: (Rider) -> Unit,
+    onSetPrivateTarget: (Rider) -> Unit,
     onReturnToGroup: () -> Unit,
     onShareTrack: () -> Unit,
     onDismissSharedTrack: () -> Unit,
@@ -153,7 +155,9 @@ fun RideScreen(
             RiderPanel(
                 riders = riders,
                 status = status,
+                privateTarget = privateTarget,
                 onSelectRider = onSelectRider,
+                onSetPrivateTarget = onSetPrivateTarget,
                 modifier = Modifier.weight(1f),
             )
 
@@ -178,7 +182,9 @@ fun RideScreen(
 private fun RiderPanel(
     riders: List<Rider>,
     status: ConnectionStatus,
+    privateTarget: String?,
     onSelectRider: (Rider) -> Unit,
+    onSetPrivateTarget: (Rider) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -201,6 +207,21 @@ private fun RiderPanel(
 
         Spacer(Modifier.height(6.dp))
 
+        if (riders.size > 1) {
+            Text(
+                // Kept to one line: wrapping here steals a roster row.
+                text = when {
+                    privateTarget != null -> "Volume up calls $privateTarget"
+                    else -> "Tap for private · hold to set target"
+                },
+                maxLines = 1,
+                color = TextMuted,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+
         when {
             riders.isEmpty() && status.isActive -> PanelMessage("Waiting for riders to join…")
             riders.isEmpty() -> PanelMessage("No one on the channel.")
@@ -212,6 +233,8 @@ private fun RiderPanel(
                     RiderRow(
                         rider = rider,
                         onClick = if (rider.isLocal) null else ({ onSelectRider(rider) }),
+                        onLongClick = if (rider.isLocal) null else ({ onSetPrivateTarget(rider) }),
+                        isPrivateTarget = !rider.isLocal && rider.identity == privateTarget,
                     )
                 }
             }
@@ -262,6 +285,10 @@ private fun ControlDock(
                     onClick = onReturnToGroup,
                     borderColor = PrivateViolet,
                     contentColor = PrivateViolet,
+                    // Shorter than a primary control on purpose: the helmet
+                    // gesture is how this is used at speed, and the roster
+                    // needs the height more than this button does.
+                    minHeight = 64.dp,
                 )
                 Spacer(Modifier.height(12.dp))
             }

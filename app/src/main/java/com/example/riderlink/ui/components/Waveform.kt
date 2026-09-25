@@ -51,7 +51,7 @@ fun Waveform(
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(96.dp),
+            .height(76.dp),
     ) {
         val barWidth = size.width / (barCount * 2f)
         val centerY = size.height / 2f

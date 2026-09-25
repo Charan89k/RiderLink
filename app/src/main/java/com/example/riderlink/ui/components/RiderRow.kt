@@ -57,6 +57,8 @@ fun RiderState.color(): Color = when (this) {
 fun RiderRow(
     rider: Rider,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
+    isPrivateTarget: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val stateColor = rider.state.color()
@@ -80,7 +82,11 @@ fun RiderRow(
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
             .background(if (speaking) stateColor.copy(alpha = 0.06f) else Color.Transparent)
             .then(
-                if (onClick != null) Modifier.clickableTarget(onClick = onClick) else Modifier
+                if (onClick != null) {
+                    Modifier.combinedClickableTarget(onClick = onClick, onLongClick = onLongClick)
+                } else {
+                    Modifier
+                }
             )
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -114,6 +120,20 @@ fun RiderRow(
                 text = rider.state.label,
                 color = stateColor,
                 style = MaterialTheme.typography.labelMedium,
+            )
+        }
+
+        // The rider the helmet gesture will call. Shown even in group mode, so
+        // the rider knows what volume-up will do before they need it.
+        if (isPrivateTarget && rider.state != RiderState.PRIVATE) {
+            Text(
+                text = "TARGET",
+                color = PrivateViolet,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(100))
+                    .background(PrivateViolet.copy(alpha = 0.14f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
 

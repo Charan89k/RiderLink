@@ -59,7 +59,7 @@ fun StatusHeader(
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

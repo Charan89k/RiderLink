@@ -28,6 +28,7 @@ import com.example.riderlink.audio.TrackInfo
 import com.example.riderlink.data.NetworkMonitor
 import com.example.riderlink.domain.ReconnectPolicy
 import com.example.riderlink.domain.model.ConnectionStatus
+import com.example.riderlink.domain.model.VoiceBoost
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -88,8 +89,20 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
 
+    /** The private channel currently carrying audio. Null means group mode. */
     private val _privateChatParticipant = MutableStateFlow<String?>(null)
     val privateChatParticipant: StateFlow<String?> = _privateChatParticipant.asStateFlow()
+
+    /**
+     * The rider the helmet gesture will call, chosen on the phone before setting off.
+     *
+     * Kept separate from the active channel so that returning to the group does
+     * not forget who was selected: the next double long-press of volume up goes
+     * straight back to the same rider without the phone coming out of a pocket.
+     * Persisted, because the same people tend to ride together.
+     */
+    private val _privateTarget = MutableStateFlow<String?>(null)
+    val privateTarget: StateFlow<String?> = _privateTarget.asStateFlow()
 
     private var privateChatParticipantIdentity: String? = null
 
@@ -159,6 +172,8 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
 
         val prefs = getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
         isAutoPauseEnabled.value = prefs.getBoolean("auto_pause", false)
+        _privateTarget.value = prefs.getString(KEY_PRIVATE_TARGET, null)
+        intercomClient.setVoiceBoost(VoiceBoost.fromName(prefs.getString(KEY_VOICE_BOOST, null)))
 
         // Listen to client connection, mute states, and speaking states to update notifications and audio focus
         serviceScope.launch {
@@ -536,7 +551,7 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
         nextClickJob?.cancel()
         if (nextClickCount >= 2) {
             nextClickCount = 0
-            cyclePrivateChat()
+            activatePrivateChannel()
         } else {
             nextClickJob = serviceScope.launch {
                 kotlinx.coroutines.delay(1200)
@@ -611,59 +626,117 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun cyclePrivateChat() {
+    /**
+     * Double long-press volume up: open the private channel.
+     *
+     * This is channel selection, not push-to-talk. The rider presses once and
+     * then talks normally for as long as they like -- voice activity detection
+     * decides when they are speaking, exactly as it does in group mode. Nothing
+     * is held down, because holding a button is not something you do at speed.
+     *
+     * If a target was chosen on the phone it is called directly. Pressing again
+     * while already private advances to the next rider, which is the only way to
+     * change target without stopping.
+     */
+    fun activatePrivateChannel() {
         val currentRoom = intercomClient.getRoom()
         if (currentRoom == null) {
-            speakTts("Not connected to room")
+            speakTts("Not connected")
             return
         }
-        val remoteParticipants = currentRoom.remoteParticipants.values.toList()
-        if (remoteParticipants.isEmpty()) {
-            speakTts("No riders available for private chat")
+
+        val riders = currentRoom.remoteParticipants.values
+            .mapNotNull { it.identity?.value }
+            .sorted()
+
+        if (riders.isEmpty()) {
+            speakTts("No other riders")
             return
         }
-        
-        val currentIndex = remoteParticipants.indexOfFirst { it.identity?.value == privateChatParticipantIdentity }
-        val nextIndex = (currentIndex + 1) % remoteParticipants.size
-        val nextParticipant = remoteParticipants[nextIndex]
-        val name = nextParticipant.identity?.value ?: "Rider"
-        
-        privateChatParticipantIdentity = name
-        _privateChatParticipant.value = name
-        
-        intercomClient.isolateParticipant(name)
-        speakTts("Private chat with $name")
+
+        val alreadyPrivate = privateChatParticipantIdentity != null
+        val preferred = _privateTarget.value
+
+        val next = when {
+            // Pressed again mid-private: move along the roster.
+            alreadyPrivate -> {
+                val index = riders.indexOf(privateChatParticipantIdentity)
+                riders[(index + 1) % riders.size]
+            }
+            // A target was chosen before the ride and is here: call them.
+            preferred != null && preferred in riders -> preferred
+            // Chosen but not on this ride, or never chosen: take the first rider.
+            else -> riders.first()
+        }
+
+        if (preferred != null && preferred !in riders && !alreadyPrivate) {
+            Log.d(TAG, "Private target $preferred is not on this ride; using $next")
+        }
+
+        openPrivateChannel(next, announce = true)
     }
 
     /**
-     * Opens a private channel with one specific rider, from a tap on the roster.
+     * Opens a private channel with one rider and remembers them as the target.
      *
-     * The helmet-button gesture cycles through riders blind because there is no
-     * screen to look at; tapping a row is the deliberate version of the same thing.
+     * Used by both the helmet gesture and a tap on the roster, so the two stay
+     * in step: whoever you last spoke to privately is who the gesture will call.
      */
+    fun openPrivateChannel(identity: String, announce: Boolean = false) {
+        privateChatParticipantIdentity = identity
+        _privateChatParticipant.value = identity
+        setPrivateTarget(identity)
+        intercomClient.isolateParticipant(identity)
+        if (announce) speakTts("Private with $identity")
+        Log.d(TAG, "Private channel open with $identity")
+        updateNotification()
+    }
+
+    /**
+     * Chooses who the helmet gesture will call, without switching channel yet.
+     */
+    fun setPrivateTarget(identity: String?) {
+        _privateTarget.value = identity
+        getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
+            .edit().putString(KEY_PRIVATE_TARGET, identity).apply()
+    }
+
+    /** Roster tap: private with this rider, or back to the group if already on them. */
     fun startPrivateChatWith(identity: String) {
         if (privateChatParticipantIdentity == identity) {
             returnToGroupChat()
-            return
+        } else {
+            openPrivateChannel(identity, announce = true)
         }
-        privateChatParticipantIdentity = identity
-        _privateChatParticipant.value = identity
-        intercomClient.isolateParticipant(identity)
-        speakTts("Private chat with $identity")
     }
 
     /** Public entry point for the dashboard's "back to group" control. */
     fun returnToGroup() = returnToGroupChat()
 
+    /** Applies a new Voice Boost level and remembers it for the next ride. */
+    fun setVoiceBoost(level: VoiceBoost) {
+        getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
+            .edit().putString(KEY_VOICE_BOOST, level.name).apply()
+        intercomClient.setVoiceBoost(level)
+    }
+
+    /**
+     * Double long-press volume down: back to the whole group.
+     *
+     * The selected target is deliberately kept, so volume up returns to the same
+     * rider without the phone coming out of a pocket.
+     */
     private fun returnToGroupChat() {
         if (privateChatParticipantIdentity == null) {
-            speakTts("Already in group intercom")
+            speakTts("Already in group")
             return
         }
         privateChatParticipantIdentity = null
         _privateChatParticipant.value = null
         intercomClient.resetPrivateChat()
-        speakTts("Returned to group intercom")
+        speakTts("Group intercom")
+        Log.d(TAG, "Returned to group; private target remains ${_privateTarget.value}")
+        updateNotification()
     }
 
     private fun duckMusicVolume() {
@@ -695,6 +768,8 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
 
     companion object {
         private const val WAKELOCK_TIMEOUT_MS = 12 * 60 * 60 * 1000L
+        private const val KEY_PRIVATE_TARGET = "private_target"
+        private const val KEY_VOICE_BOOST = "voice_boost"
         private const val TAG = "IntercomService"
         const val CHANNEL_ID = "riderlink_intercom_channel"
         const val NOTIFICATION_ID = 1001

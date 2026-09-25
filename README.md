@@ -10,9 +10,10 @@ whatever headsets they happen to own, at whatever distance mobile coverage
 reaches.
 
 <p align="center">
-  <img src="docs/screenshots/lobby.png" width="30%" alt="Lobby: create or join a ride" />
-  <img src="docs/screenshots/ride-dashboard.png" width="30%" alt="Ride dashboard with rider roster and microphone control" />
-  <img src="docs/screenshots/settings.png" width="30%" alt="Settings" />
+  <img src="docs/screenshots/lobby.png" width="24%" alt="Lobby: create or join a ride" />
+  <img src="docs/screenshots/ride-dashboard.png" width="24%" alt="Ride dashboard with rider roster and microphone control" />
+  <img src="docs/screenshots/private-channel.png" width="24%" alt="Private channel with one rider" />
+  <img src="docs/screenshots/voice-boost.png" width="24%" alt="Voice Boost settings" />
 </p>
 
 ---
@@ -28,11 +29,15 @@ reaches.
 * **Music keeps playing.** RiderLink takes ducking audio focus, so your music
   drops in volume while someone talks and comes back afterwards. It can pause
   instead, if you prefer.
-* **Helmet button gestures.** Triple-press play/pause to mute, double long-press
-  volume up for a private channel, volume down to return to the group — with
-  spoken confirmation, so you never look down.
-* **Private rider channels.** Isolate one rider's audio, from the roster or from
-  a helmet button.
+* **Voice Boost.** Lifts incoming rider voice for helmet speakers that cannot
+  cut through wind and engine noise, with a limiter so it gets louder instead of
+  distorted. Applied per voice track, so it never touches your music.
+* **Helmet button gestures — channel switching, not push-to-talk.** Triple-press
+  play/pause to mute, double long-press volume up to open your private channel,
+  volume down to return to the group. Press once and talk normally; nothing is
+  held down. Each one is confirmed out loud, so you never look at the phone.
+* **Private rider channels.** Pick the rider your helmet gesture will call, then
+  switch to them and back without touching the phone again.
 * **Live rider roster.** Who is connected, who is speaking, who is muted.
 * **Reconnection that survives tunnels.** Exponential backoff with jitter,
   waiting on the radio rather than retrying into a dead one, and bounded so a
@@ -41,6 +46,92 @@ reaches.
   button is 132dp.
 
 ---
+
+## How talking works
+
+There is no push-to-talk. The microphone stays open while you are unmuted and
+WebRTC's voice activity detection decides when you are actually speaking, which
+is what drives the speaking indicator and music ducking. Holding a button down
+to talk is not something you can do at speed in gloves, so the helmet gestures
+change *which channel* your voice goes to instead:
+
+```text
+                    speak normally
+                          │
+                         VAD
+                          │
+              ┌───────────┴───────────┐
+           GROUP                   PRIVATE
+        all riders             one selected rider
+              └───────────┬───────────┘
+                          │
+                    LiveKit / WebRTC
+                          │
+                    incoming audio
+                          │
+                     Voice Boost
+                     gain + limiter
+                          │
+                  Bluetooth helmet
+```
+
+**Choosing who the gesture calls.** Long-press a rider in the roster to mark
+them as your target — the row shows `TARGET` and the panel says "Volume up calls
+Arjun". Tapping a rider opens the channel immediately and marks them too. The
+target is remembered between rides, so with the same group you set it once.
+
+| Gesture | What happens |
+|---|---|
+| Double long-press volume up | Opens your private channel. Press again to move to the next rider. |
+| Double long-press volume down | Back to the group. Your target is kept. |
+| Triple-press play/pause | Mute or unmute your microphone. |
+
+Most Bluetooth helmet headsets send `MEDIA_NEXT` and `MEDIA_PREVIOUS` for a long
+press of volume up and down, which is what RiderLink listens for.
+
+## Voice Boost
+
+Helmet speakers are small and a moving motorcycle is loud. Voice Boost lifts
+incoming rider voice, and does it without turning speech into a buzz:
+
+```text
+remote voice track
+        │
+   read-only tap  ──▶  peak level of every frame
+        │                        │
+        │                 limiter decision
+        │              fast attack, slow release
+        ▼                        │
+ RemoteAudioTrack.setVolume(safe gain)
+        │
+   WebRTC mixer ──▶ Bluetooth ──▶ helmet
+```
+
+Two properties fall out of putting the gain *inside* WebRTC, per track:
+
+* **It cannot amplify your phone.** Music, navigation and everything else keep
+  their own levels, and the existing ducking behaviour is unchanged.
+* **It cannot break privacy.** A track you are not subscribed to produces no
+  audio to boost, so private mode works exactly as before.
+
+| Level | Gain |
+|---|---|
+| Normal | 1.00x — a true bypass, nothing is processed |
+| Boost | 1.25x |
+| High | 1.50x |
+| Maximum | 1.75x |
+
+The limiter watches the real peak of each frame and only pulls gain back as far
+as it must to stay under about −1 dBFS, then lets it climb again. Gain drops in
+milliseconds and recovers over about half a second, so one shouted word does not
+leave the next sentence quiet. It is an envelope follower, not a look-ahead
+brickwall: a transient inside a single frame can still get through. It prevents
+the sustained clipping that actually makes speech unintelligible.
+
+Above roughly 1.75x the limiter ends up working through most normal speech,
+which costs clarity for very little extra loudness — so that is where the scale
+stops. **Find your own level with your own helmet**: wind noise and speaker
+quality vary far more between bikes than these numbers do.
 
 ## Architecture
 
@@ -221,7 +312,14 @@ motorcycle intercom has no business asking for the camera.
 * **Tokens last 12 hours.** LiveKit needs a valid token to re-establish a
   dropped link, and the app does not yet refresh on reconnect, so the TTL has to
   outlast a full day's ride.
-* **No PTT.** The intercom is always open while unmuted.
+* **Voice Boost gains are unverified on real helmet hardware.** The limiter's
+  behaviour is unit tested and was measured end-to-end against a live LiveKit
+  server, but whether 1.75x is the right ceiling for a given helmet is a
+  question only a ride can answer.
+* **Voice Boost is global, not per-rider.** Everyone incoming gets the same
+  treatment. Per-rider gain would be a natural next step.
+* **No PTT, by design.** The intercom is open while unmuted and voice activity
+  detection decides when you are speaking.
 
 ---
 

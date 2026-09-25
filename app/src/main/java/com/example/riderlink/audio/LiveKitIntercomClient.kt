@@ -10,8 +10,10 @@ import io.livekit.android.room.Room
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.room.track.LocalAudioTrackOptions
 import io.livekit.android.room.track.DataPublishReliability
+import io.livekit.android.room.track.RemoteAudioTrack
 import io.livekit.android.room.track.RemoteTrackPublication
 import com.example.riderlink.domain.model.ConnectionStatus
+import com.example.riderlink.domain.model.VoiceBoost
 import com.example.riderlink.domain.model.Rider
 import com.example.riderlink.domain.model.RiderState
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +33,9 @@ class LiveKitIntercomClient(private val context: Context) {
     private var room: Room? = null
     private val clientJob = SupervisorJob()
     private val clientScope = CoroutineScope(Dispatchers.Main + clientJob)
+
+    /** Lifts incoming rider voice for helmet speakers. See [VoiceBoostController]. */
+    private val voiceBoost = VoiceBoostController(clientScope)
 
     /** The state the UI renders. Never derived from the existence of a Room object. */
     private val _connectionStatus = MutableStateFlow(ConnectionStatus.IDLE)
@@ -209,6 +214,15 @@ class LiveKitIntercomClient(private val context: Context) {
                                 remotePub?.setSubscribed(false)
                             }
                         }
+                        (event.track as? RemoteAudioTrack)?.let { audioTrack ->
+                            event.publication.sid?.let { sid -> voiceBoost.attach(sid, audioTrack) }
+                        }
+                        updateParticipants()
+                    }
+                    is RoomEvent.TrackUnsubscribed -> {
+                        // The SDK names this field `publications`, singular object.
+                        event.publications.sid?.let(voiceBoost::detach)
+                        updateParticipants()
                     }
                     is RoomEvent.ActiveSpeakersChanged -> {
                         val speakers = event.speakers
@@ -264,6 +278,11 @@ class LiveKitIntercomClient(private val context: Context) {
         }
     }
 
+    /** Sets the incoming-voice boost level. Applies to tracks already playing. */
+    fun setVoiceBoost(level: VoiceBoost) {
+        voiceBoost.setBoost(level)
+    }
+
     fun setMute(muted: Boolean) {
         val currentRoom = room ?: return
         clientScope.launch {
@@ -306,6 +325,7 @@ class LiveKitIntercomClient(private val context: Context) {
             return
         }
         Log.d(TAG, "Disconnecting from LiveKit room")
+        voiceBoost.detachAll()
         clientScope.launch {
             try {
                 currentRoom.disconnect()
@@ -413,7 +433,19 @@ class LiveKitIntercomClient(private val context: Context) {
             )
         }
 
-        _riders.value = roster
+        // Stable, meaningful order. remoteParticipants is a Map, so without an
+        // explicit sort the rows reshuffle whenever it rehashes -- rows moving
+        // under a gloved thumb is how you open a private channel by accident.
+        //
+        // The private rider sorts above even the local row: the panel is only
+        // tall enough for a row or two once the dashboard's controls have their
+        // space, and you already know who you are. Who you are locked to is the
+        // thing worth the top slot.
+        _riders.value = roster.sortedWith(
+            compareByDescending<Rider> { it.state == RiderState.PRIVATE }
+                .thenByDescending { it.isLocal }
+                .thenBy { it.displayName.lowercase() }
+        )
     }
 }
 

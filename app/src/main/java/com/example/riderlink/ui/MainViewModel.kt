@@ -14,6 +14,7 @@ import com.example.riderlink.audio.TrackInfo
 import com.example.riderlink.domain.model.AudioRoute
 import com.example.riderlink.domain.model.ConnectionStatus
 import com.example.riderlink.domain.model.Rider
+import com.example.riderlink.domain.model.VoiceBoost
 import com.example.riderlink.firebase.FirebaseRoomRepository
 import com.example.riderlink.firebase.RoomDetails
 import com.example.riderlink.service.IntercomService
@@ -86,6 +87,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isVolumeBoostEnabled = MutableStateFlow(prefs.getBoolean("volume_boost", false))
     val isVolumeBoostEnabled: StateFlow<Boolean> = _isVolumeBoostEnabled.asStateFlow()
 
+    /** How much to lift incoming rider voice. Set once before a ride. */
+    private val _voiceBoost = MutableStateFlow(VoiceBoost.fromName(prefs.getString(KEY_VOICE_BOOST, null)))
+    val voiceBoost: StateFlow<VoiceBoost> = _voiceBoost.asStateFlow()
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             Log.d(TAG, "Service connected to ViewModel")
@@ -94,8 +99,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             intercomService = srv
             _isServiceBound.value = true
 
-            // Set the audio mode immediately when bound
+            // Push the saved audio preferences into the service as soon as it
+            // exists, so a ride started from a cold launch is already configured.
             srv.setAudioModeVoip(_audioModeVoip.value)
+            srv.setVoiceBoost(_voiceBoost.value)
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -152,6 +159,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val privateChatParticipant: StateFlow<String?> = _isServiceBound.flatMapLatest { bound ->
         if (bound) intercomService?.privateChatParticipant ?: flowOf(null)
         else flowOf(null)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Who the helmet gesture will call. May be set while still in group mode. */
+    val privateTarget: StateFlow<String?> = _isServiceBound.flatMapLatest { bound ->
+        if (bound) intercomService?.privateTarget ?: flowOf(null) else flowOf(null)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val isAutoPauseEnabled: StateFlow<Boolean> = _isServiceBound.flatMapLatest { bound ->
@@ -249,6 +261,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val SERVICE_BIND_TIMEOUT_MS = 5_000L
         private const val KEY_RIDER_NAME = "rider_name"
         private const val KEY_TOKEN_SERVER = "token_server_url"
+        private const val KEY_VOICE_BOOST = "voice_boost"
     }
 
     init {
@@ -348,6 +361,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun returnToGroup() {
         intercomService?.returnToGroup()
+    }
+
+    /**
+     * Chooses who the helmet gesture calls, without switching channel.
+     *
+     * Long-pressing a rider sets this; tapping opens the channel straight away.
+     */
+    fun setPrivateTarget(identity: String?) {
+        intercomService?.setPrivateTarget(identity)
+    }
+
+    fun setVoiceBoost(level: VoiceBoost) {
+        _voiceBoost.value = level
+        prefs.edit().putString(KEY_VOICE_BOOST, level.name).apply()
+        intercomService?.setVoiceBoost(level)
     }
 
     private fun startServiceForeground(roomCode: String) {

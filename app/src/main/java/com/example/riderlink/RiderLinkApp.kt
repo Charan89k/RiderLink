@@ -117,6 +117,7 @@ fun RiderLinkApp() {
                 val attempt by viewModel.reconnectAttempt.collectAsStateWithLifecycle()
                 val route by viewModel.audioRoute.collectAsStateWithLifecycle()
                 val privateChat by viewModel.privateChatParticipant.collectAsStateWithLifecycle()
+                val privateTarget by viewModel.privateTarget.collectAsStateWithLifecycle()
                 val localTrack by viewModel.localTrack.collectAsStateWithLifecycle()
                 val sharedTrack by viewModel.sharedTrack.collectAsStateWithLifecycle()
                 val error by viewModel.error.collectAsStateWithLifecycle()
@@ -129,12 +130,14 @@ fun RiderLinkApp() {
                     reconnectAttempt = attempt,
                     audioRoute = route,
                     privateChatWith = privateChat,
+                    privateTarget = privateTarget,
                     localTrack = localTrack,
                     sharedTrack = sharedTrack,
                     error = error,
                     onDismissError = viewModel::clearError,
                     onToggleMute = viewModel::toggleMute,
                     onSelectRider = { viewModel.startPrivateChat(it.identity) },
+                    onSetPrivateTarget = { viewModel.setPrivateTarget(it.identity) },
                     onReturnToGroup = viewModel::returnToGroup,
                     onShareTrack = viewModel::shareCurrentTrack,
                     onDismissSharedTrack = viewModel::clearSharedTrack,
@@ -155,6 +158,7 @@ fun RiderLinkApp() {
                 val highPass by viewModel.highPassFilterEnabled.collectAsStateWithLifecycle()
                 val voip by viewModel.audioModeVoip.collectAsStateWithLifecycle()
                 val boost by viewModel.isVolumeBoostEnabled.collectAsStateWithLifecycle()
+                val voiceBoost by viewModel.voiceBoost.collectAsStateWithLifecycle()
                 val autoPause by viewModel.isAutoPauseEnabled.collectAsStateWithLifecycle()
 
                 SettingsScreen(
@@ -171,6 +175,7 @@ fun RiderLinkApp() {
                         highPassFilter = highPass,
                         voipAudioMode = voip,
                         volumeBoost = boost,
+                        voiceBoost = voiceBoost,
                         pauseMusicWhileTalking = autoPause,
                         appVersion = BuildConfig.VERSION_NAME,
                         notificationAccessGranted = isNotificationAccessGranted(context),
@@ -186,6 +191,7 @@ fun RiderLinkApp() {
                         onHighPassFilter = viewModel::setHighPassFilterEnabled,
                         onVoipAudioMode = viewModel::setAudioModeVoip,
                         onVolumeBoost = viewModel::setVolumeBoostEnabled,
+                        onVoiceBoost = viewModel::setVoiceBoost,
                         onPauseMusicWhileTalking = viewModel::setAutoPauseEnabled,
                         onOpenNotificationAccess = {
                             context.startActivity(

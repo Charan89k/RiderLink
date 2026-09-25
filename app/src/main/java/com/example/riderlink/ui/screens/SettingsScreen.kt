@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
+import com.example.riderlink.domain.model.VoiceBoost
 import com.example.riderlink.theme.Electric
 import com.example.riderlink.theme.LiveGreen
 import com.example.riderlink.theme.WarnAmber
@@ -36,6 +37,7 @@ import com.example.riderlink.theme.TextMuted
 import com.example.riderlink.theme.TextPrimary
 import com.example.riderlink.theme.TextSecondary
 import com.example.riderlink.ui.components.SecondaryAction
+import com.example.riderlink.ui.components.SegmentedSelector
 import com.example.riderlink.ui.components.clickableTarget
 import com.example.riderlink.ui.components.SectionLabel
 import com.example.riderlink.ui.components.panel
@@ -55,6 +57,7 @@ data class SettingsState(
     val highPassFilter: Boolean,
     val voipAudioMode: Boolean,
     val volumeBoost: Boolean,
+    val voiceBoost: VoiceBoost,
     val pauseMusicWhileTalking: Boolean,
     val appVersion: String,
     val notificationAccessGranted: Boolean,
@@ -71,6 +74,7 @@ data class SettingsActions(
     val onHighPassFilter: (Boolean) -> Unit,
     val onVoipAudioMode: (Boolean) -> Unit,
     val onVolumeBoost: (Boolean) -> Unit,
+    val onVoiceBoost: (VoiceBoost) -> Unit,
     val onPauseMusicWhileTalking: (Boolean) -> Unit,
     val onOpenNotificationAccess: () -> Unit,
     val onBack: () -> Unit,
@@ -142,6 +146,11 @@ fun SettingsScreen(
                         value = state.musicVolume,
                         max = state.maxMusicVolume,
                         onValueChange = actions.onMusicVolume,
+                    )
+                    GroupDivider()
+                    VoiceBoostSetting(
+                        selected = state.voiceBoost,
+                        onSelect = actions.onVoiceBoost,
                     )
                     GroupDivider()
                     SwitchSetting(
@@ -256,6 +265,46 @@ private fun GroupDivider() {
             .height(1.dp)
             .background(HairlineSubtle),
     )
+}
+
+/**
+ * Voice Boost.
+ *
+ * Lifts incoming rider voice only, so music keeps its own level. A limiter sits
+ * after the gain, which is why the higher settings get louder without turning
+ * speech into a buzz -- but wind and a cheap helmet speaker still set the
+ * ceiling, so the right level is whatever sounds clearest on your own hardware.
+ */
+@Composable
+private fun VoiceBoostSetting(selected: VoiceBoost, onSelect: (VoiceBoost) -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("Voice boost", color = TextPrimary, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = selected.percentLabel,
+                color = Electric,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        SegmentedSelector(
+            options = VoiceBoost.entries,
+            selected = selected,
+            onSelect = onSelect,
+            label = { it.label },
+        )
+        Text(
+            text = "Makes other riders louder in your helmet without touching your music. " +
+                "Turn it down if speech starts to sound harsh.",
+            color = TextMuted,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
 }
 
 @Composable
