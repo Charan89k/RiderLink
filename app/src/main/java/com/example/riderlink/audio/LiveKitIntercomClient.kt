@@ -32,9 +32,6 @@ class LiveKitIntercomClient(private val context: Context) {
     private val clientJob = SupervisorJob()
     private val clientScope = CoroutineScope(Dispatchers.Main + clientJob)
 
-    private val _connectionState = MutableStateFlow(Room.State.DISCONNECTED)
-    val connectionState: StateFlow<Room.State> = _connectionState.asStateFlow()
-
     /** The state the UI renders. Never derived from the existence of a Room object. */
     private val _connectionStatus = MutableStateFlow(ConnectionStatus.IDLE)
     val connectionStatus: StateFlow<ConnectionStatus> = _connectionStatus.asStateFlow()
@@ -131,26 +128,22 @@ class LiveKitIntercomClient(private val context: Context) {
                 Log.d(TAG, "LiveKit room event: $event")
                 when (event) {
                     is RoomEvent.Connected -> {
-                        _connectionState.value = currentRoom.state
                         _connectionStatus.value = ConnectionStatus.CONNECTED
                         _lastFailure.value = null
                         _sessionLost.value = false
                         updateParticipants()
                     }
                     is RoomEvent.Reconnecting -> {
-                        _connectionState.value = currentRoom.state
                         _connectionStatus.value = ConnectionStatus.RECONNECTING
                         updateParticipants()
                     }
                     is RoomEvent.Reconnected -> {
-                        _connectionState.value = currentRoom.state
                         _connectionStatus.value = ConnectionStatus.CONNECTED
                         _lastFailure.value = null
                         _sessionLost.value = false
                         updateParticipants()
                     }
                     is RoomEvent.Disconnected -> {
-                        _connectionState.value = currentRoom.state
                         // A disconnect the rider did not ask for is a failure the
                         // session supervisor should try to recover from.
                         if (disconnectRequested) {
@@ -185,10 +178,14 @@ class LiveKitIntercomClient(private val context: Context) {
                     is RoomEvent.ParticipantDisconnected -> {
                         updateParticipants()
                     }
-                    is RoomEvent.TrackMuted,
-                    is RoomEvent.TrackUnmuted -> {
+                    is RoomEvent.TrackMuted -> {
+                        if (event.participant.isLocalIn(currentRoom)) _isMuted.value = true
                         // Without this the roster would keep showing "Connected" for
                         // a rider who has muted themselves.
+                        updateParticipants()
+                    }
+                    is RoomEvent.TrackUnmuted -> {
+                        if (event.participant.isLocalIn(currentRoom)) _isMuted.value = false
                         updateParticipants()
                     }
                     is RoomEvent.TrackPublished -> {
@@ -246,17 +243,21 @@ class LiveKitIntercomClient(private val context: Context) {
         try {
             currentRoom.connect(url, token)
             Log.d(TAG, "Successfully connected to LiveKit room")
-            _connectionState.value = currentRoom.state
             _connectionStatus.value = ConnectionStatus.CONNECTED
             
-            // Enable microphone by default and configure voice processing
+            // Enable the microphone and record that intent directly.
+            //
+            // Reading isMicrophoneEnabled back straight after enabling returns a
+            // stale false while the track is still being negotiated, which made
+            // the dashboard announce MIC MUTED to a rider who was in fact
+            // transmitting. The authoritative state now comes from this call
+            // succeeding, and from the TrackMuted/TrackUnmuted events below.
             currentRoom.localParticipant.setMicrophoneEnabled(true)
-            _isMuted.value = !currentRoom.localParticipant.isMicrophoneEnabled
+            _isMuted.value = false
             
             updateParticipants()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to connect to LiveKit room", e)
-            _connectionState.value = Room.State.DISCONNECTED
             _connectionStatus.value = ConnectionStatus.ERROR
             _lastFailure.value = e.message
             throw e
@@ -312,7 +313,6 @@ class LiveKitIntercomClient(private val context: Context) {
                 Log.e(TAG, "Error disconnecting room", e)
             }
             room = null
-            _connectionState.value = Room.State.DISCONNECTED
             _connectionStatus.value = ConnectionStatus.IDLE
             _riders.value = emptyList()
             _isMuted.value = false
@@ -362,6 +362,10 @@ class LiveKitIntercomClient(private val context: Context) {
      * Called on every event that can change what a rider's row should say, so the
      * list is always a snapshot of reality rather than an accumulated guess.
      */
+    /** True when this event came from the rider holding the phone. */
+    private fun io.livekit.android.room.participant.Participant.isLocalIn(room: Room): Boolean =
+        identity?.value != null && identity?.value == room.localParticipant.identity?.value
+
     private fun updateParticipants() {
         val currentRoom = room
         if (currentRoom == null) {

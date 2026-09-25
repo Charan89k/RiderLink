@@ -25,6 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
 import com.example.riderlink.theme.Electric
+import com.example.riderlink.theme.LiveGreen
+import com.example.riderlink.theme.WarnAmber
 import com.example.riderlink.theme.HairlineSubtle
 import com.example.riderlink.theme.Obsidian
 import com.example.riderlink.theme.PageGradient
@@ -34,6 +36,7 @@ import com.example.riderlink.theme.TextMuted
 import com.example.riderlink.theme.TextPrimary
 import com.example.riderlink.theme.TextSecondary
 import com.example.riderlink.ui.components.SecondaryAction
+import com.example.riderlink.ui.components.clickableTarget
 import com.example.riderlink.ui.components.SectionLabel
 import com.example.riderlink.ui.components.panel
 
@@ -54,6 +57,7 @@ data class SettingsState(
     val volumeBoost: Boolean,
     val pauseMusicWhileTalking: Boolean,
     val appVersion: String,
+    val notificationAccessGranted: Boolean,
 )
 
 data class SettingsActions(
@@ -68,6 +72,7 @@ data class SettingsActions(
     val onVoipAudioMode: (Boolean) -> Unit,
     val onVolumeBoost: (Boolean) -> Unit,
     val onPauseMusicWhileTalking: (Boolean) -> Unit,
+    val onOpenNotificationAccess: () -> Unit,
     val onBack: () -> Unit,
 )
 
@@ -201,7 +206,10 @@ fun SettingsScreen(
                     GroupDivider()
                     GestureRow("Double long-press volume down", "Return to the group")
                     GroupDivider()
-                    Note("Requires notification access so RiderLink can see your headset's media keys.")
+                    NotificationAccessRow(
+                        granted = state.notificationAccessGranted,
+                        onOpen = actions.onOpenNotificationAccess,
+                    )
                 }
             }
 
@@ -367,6 +375,44 @@ private fun GestureRow(gesture: String, result: String) {
     ) {
         Text(gesture, color = TextPrimary, style = MaterialTheme.typography.bodyLarge)
         Text(result, color = Electric, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * Notification access gates the helmet-button gestures and the track readout.
+ *
+ * It cannot be requested with a runtime permission dialog -- only the system
+ * settings screen can grant it -- so this row states plainly whether it is on
+ * and takes the rider there.
+ */
+@Composable
+private fun NotificationAccessRow(granted: Boolean, onOpen: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clickableTarget(onClick = onOpen)
+            .padding(horizontal = 18.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("Notification access", color = TextPrimary, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = if (granted) {
+                    "Granted. Helmet buttons and track info are active."
+                } else {
+                    "Not granted. Helmet buttons and track info will not work."
+                },
+                color = if (granted) LiveGreen else WarnAmber,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        Text(
+            text = if (granted) "CHANGE" else "GRANT",
+            color = Electric,
+            style = MaterialTheme.typography.labelSmall,
+        )
     }
 }
 

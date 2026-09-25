@@ -26,7 +26,6 @@ class BluetoothAudioRouter(private val context: Context) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var isRoutingStarted = false
     private var activeFocusRequest: AudioFocusRequest? = null
-    private var isFocusExclusive = false
 
     /**
      * Where audio is actually going right now.
@@ -87,7 +86,6 @@ class BluetoothAudioRouter(private val context: Context) {
                 .build()
 
             activeFocusRequest = request
-            isFocusExclusive = exclusive
             val result = audioManager.requestAudioFocus(request)
             Log.d(TAG, "Requested audio focus (exclusive=$exclusive), result: $result")
         }
@@ -100,7 +98,6 @@ class BluetoothAudioRouter(private val context: Context) {
                 Log.d(TAG, "Abandoned audio focus request, result: $result")
             }
             activeFocusRequest = null
-            isFocusExclusive = false
         }
     }
 

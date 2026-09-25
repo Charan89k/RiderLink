@@ -41,8 +41,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Configuration states. The LiveKit URL is no longer configured here: the
     // token server returns it alongside each token, so there is one source of truth.
-    val tokenServerUrl = MutableStateFlow(Config.DEFAULT_TOKEN_SERVER_URL)
-    val riderName = MutableStateFlow("Rider-${Random.nextInt(100, 1000)}")
+    // Persisted like every other setting: a call sign that resets to a random
+    // number on each launch would make riders unrecognisable to each other, and
+    // a token server URL that resets would silently point at the default.
+    val tokenServerUrl = MutableStateFlow(
+        prefs.getString(KEY_TOKEN_SERVER, null) ?: Config.DEFAULT_TOKEN_SERVER_URL
+    )
+    val riderName = MutableStateFlow(
+        prefs.getString(KEY_RIDER_NAME, null) ?: "Rider-${Random.nextInt(100, 1000)}"
+    )
 
     // Service binding state
     private val _isServiceBound = MutableStateFlow(false)
@@ -166,8 +173,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    fun shareSong(title: String, artist: String) {
-        intercomService?.intercomClient?.shareSong(title, artist)
+    /** Publishes whatever this rider is listening to, for the rest of the group. */
+    fun shareCurrentTrack() {
+        val track = localTrack.value ?: return
+        intercomService?.intercomClient?.shareSong(track.title, track.artist)
     }
 
     fun setAutoPauseEnabled(enabled: Boolean) {
@@ -233,19 +242,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun refreshVolumes() {
-        _voiceVolume.value = audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
-        _musicVolume.value = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-    }
 
     companion object {
         private const val TAG = "MainViewModel"
         private const val CODE_LENGTH = 4
         private const val SERVICE_BIND_TIMEOUT_MS = 5_000L
+        private const val KEY_RIDER_NAME = "rider_name"
+        private const val KEY_TOKEN_SERVER = "token_server_url"
     }
 
     init {
         bindIntercomService()
+
+        // Persist as the rider types rather than on a save button they would
+        // have to find with gloves on.
+        viewModelScope.launch {
+            riderName.collect { prefs.edit().putString(KEY_RIDER_NAME, it).apply() }
+        }
+        viewModelScope.launch {
+            tokenServerUrl.collect { prefs.edit().putString(KEY_TOKEN_SERVER, it).apply() }
+        }
     }
 
     private fun bindIntercomService() {

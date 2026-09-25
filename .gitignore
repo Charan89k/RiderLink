@@ -14,3 +14,10 @@
 .cxx
 local.properties
 .jdk-21/
+
+# Release signing. The keystore lives outside the repository; this file points
+# at it and holds its passwords. Never commit either.
+keystore.properties
+*.jks
+*.keystore
+dist/

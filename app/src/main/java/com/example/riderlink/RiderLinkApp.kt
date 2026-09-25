@@ -1,6 +1,8 @@
 package com.example.riderlink
 
 import android.Manifest
+import android.content.ComponentName
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -115,6 +117,8 @@ fun RiderLinkApp() {
                 val attempt by viewModel.reconnectAttempt.collectAsStateWithLifecycle()
                 val route by viewModel.audioRoute.collectAsStateWithLifecycle()
                 val privateChat by viewModel.privateChatParticipant.collectAsStateWithLifecycle()
+                val localTrack by viewModel.localTrack.collectAsStateWithLifecycle()
+                val sharedTrack by viewModel.sharedTrack.collectAsStateWithLifecycle()
                 val error by viewModel.error.collectAsStateWithLifecycle()
 
                 RideScreen(
@@ -125,11 +129,15 @@ fun RiderLinkApp() {
                     reconnectAttempt = attempt,
                     audioRoute = route,
                     privateChatWith = privateChat,
+                    localTrack = localTrack,
+                    sharedTrack = sharedTrack,
                     error = error,
                     onDismissError = viewModel::clearError,
                     onToggleMute = viewModel::toggleMute,
                     onSelectRider = { viewModel.startPrivateChat(it.identity) },
                     onReturnToGroup = viewModel::returnToGroup,
+                    onShareTrack = viewModel::shareCurrentTrack,
+                    onDismissSharedTrack = viewModel::clearSharedTrack,
                     onLeaveRide = viewModel::disconnect,
                     onOpenSettings = { backStack.add(Settings) },
                     modifier = Modifier.safeDrawingPadding(),
@@ -165,6 +173,7 @@ fun RiderLinkApp() {
                         volumeBoost = boost,
                         pauseMusicWhileTalking = autoPause,
                         appVersion = BuildConfig.VERSION_NAME,
+                        notificationAccessGranted = isNotificationAccessGranted(context),
                     ),
                     actions = SettingsActions(
                         onRiderName = { viewModel.riderName.value = it },
@@ -178,6 +187,11 @@ fun RiderLinkApp() {
                         onVoipAudioMode = viewModel::setAudioModeVoip,
                         onVolumeBoost = viewModel::setVolumeBoostEnabled,
                         onPauseMusicWhileTalking = viewModel::setAutoPauseEnabled,
+                        onOpenNotificationAccess = {
+                            context.startActivity(
+                                Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                            )
+                        },
                         onBack = { backStack.removeLastOrNull() },
                     ),
                     modifier = Modifier.safeDrawingPadding(),
@@ -251,3 +265,21 @@ private fun essentialPermissions(): List<String> = buildList {
 
 private fun hasPermission(context: android.content.Context, permission: String): Boolean =
     ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+/**
+ * Notification access is not a runtime permission: it is a per-app toggle in
+ * system settings, so it has to be read back from the enabled-listeners list.
+ */
+private fun isNotificationAccessGranted(context: android.content.Context): Boolean {
+    val component = ComponentName(
+        context,
+        com.example.riderlink.service.IntercomNotificationListenerService::class.java,
+    )
+    val enabled = android.provider.Settings.Secure.getString(
+        context.contentResolver,
+        "enabled_notification_listeners",
+    ).orEmpty()
+    return enabled.split(":").any {
+        ComponentName.unflattenFromString(it) == component
+    }
+}

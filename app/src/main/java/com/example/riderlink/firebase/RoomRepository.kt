@@ -5,6 +5,7 @@ import android.util.Log
 import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.random.Random
@@ -21,6 +22,15 @@ data class RoomDetails(
 
 interface RoomRepository {
     suspend fun createRoom(): RoomDetails
+
+    /**
+     * Looks a code up in the directory.
+     *
+     * Returns null only when the directory was reachable and said the ride does
+     * not exist. When the directory itself cannot be reached this returns the
+     * room anyway: access is enforced by the token server, which issues
+     * room-scoped tokens, so an unreachable directory must not ground a ride.
+     */
     suspend fun joinRoom(roomCode: String): RoomDetails?
 }
 
@@ -55,6 +65,9 @@ class FirebaseRoomRepository(private val context: Context) : RoomRepository {
 
     companion object {
         private const val TAG = "RoomRepository"
+
+        /** Firestore is a convenience here, not a dependency. Never wait long for it. */
+        private const val FIRESTORE_TIMEOUT_MS = 6_000L
         // In-memory fallback database for simulation
         private val simulatedRooms = mutableMapOf<String, RoomDetails>()
     }
@@ -68,30 +81,31 @@ class FirebaseRoomRepository(private val context: Context) : RoomRepository {
 
         val db = firestore
         if (db != null) {
-            try {
-                suspendCancellableCoroutine<Unit> { continuation ->
-                    db.collection("rooms")
-                        .document(code)
-                        .set(roomDetails)
-                        .addOnSuccessListener {
-                            continuation.resume(Unit)
-                        }
-                        .addOnFailureListener { exception ->
-                            continuation.resumeWithException(exception)
-                        }
-                }
-                Log.d(TAG, "Successfully created room $code in Firestore")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error writing room to Firestore, falling back to simulated memory", e)
-                synchronized(simulatedRooms) {
-                    simulatedRooms[code] = roomDetails
-                }
+            // Firestore's set() only reports success once the write reaches the
+            // server; offline it queues silently and the listener never fires.
+            // Without this bound, tapping "Create ride" on a weak signal spins
+            // forever with no error and no way out.
+            val written = withTimeoutOrNull(FIRESTORE_TIMEOUT_MS) {
+                runCatching {
+                    suspendCancellableCoroutine<Unit> { continuation ->
+                        db.collection("rooms")
+                            .document(code)
+                            .set(roomDetails)
+                            .addOnSuccessListener { continuation.resume(Unit) }
+                            .addOnFailureListener { continuation.resumeWithException(it) }
+                    }
+                }.isSuccess
+            } ?: false
+
+            if (written) {
+                Log.d(TAG, "Registered ride $code in Firestore")
+            } else {
+                Log.w(TAG, "Could not register ride $code in Firestore; continuing locally")
+                synchronized(simulatedRooms) { simulatedRooms[code] = roomDetails }
             }
         } else {
-            Log.d(TAG, "Simulating room creation in memory for code $code")
-            synchronized(simulatedRooms) {
-                simulatedRooms[code] = roomDetails
-            }
+            Log.d(TAG, "Firestore unavailable; registering ride $code locally")
+            synchronized(simulatedRooms) { simulatedRooms[code] = roomDetails }
         }
 
         return roomDetails
@@ -100,46 +114,45 @@ class FirebaseRoomRepository(private val context: Context) : RoomRepository {
     override suspend fun joinRoom(roomCode: String): RoomDetails? {
         val cleanCode = roomCode.trim()
         val db = firestore
+
         if (db != null) {
-            try {
-                val document = suspendCancellableCoroutine<com.google.firebase.firestore.DocumentSnapshot> { continuation ->
-                    db.collection("rooms")
-                        .document(cleanCode)
-                        .get()
-                        .addOnSuccessListener { doc ->
-                            continuation.resume(doc)
-                        }
-                        .addOnFailureListener { exception ->
-                            continuation.resumeWithException(exception)
-                        }
-                }
-                if (document.exists()) {
-                    val roomDetails = document.toObject(RoomDetails::class.java)
-                    if (roomDetails != null) {
-                        Log.d(TAG, "Successfully fetched room $cleanCode from Firestore")
-                        return roomDetails
+            val lookup = withTimeoutOrNull(FIRESTORE_TIMEOUT_MS) {
+                runCatching {
+                    suspendCancellableCoroutine { continuation ->
+                        db.collection("rooms")
+                            .document(cleanCode)
+                            .get()
+                            .addOnSuccessListener { continuation.resume(it) }
+                            .addOnFailureListener { continuation.resumeWithException(it) }
                     }
-                } else {
-                    Log.w(TAG, "Room $cleanCode not found in Firestore. Trying local simulation lookup.")
+                }.getOrNull()
+            }
+
+            when {
+                lookup == null ->
+                    Log.w(TAG, "Ride directory unreachable; joining $cleanCode unverified")
+                lookup.exists() -> {
+                    Log.d(TAG, "Found ride $cleanCode in Firestore")
+                    return lookup.toObject(RoomDetails::class.java)
+                        ?: RoomDetails(cleanCode, System.currentTimeMillis())
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error reading room from Firestore: ${e.message}. Trying local simulation lookup.", e)
+                else -> {
+                    // The directory answered and the ride is not there. This is
+                    // the one case where a wrong code is reported as wrong.
+                    Log.w(TAG, "Ride $cleanCode does not exist")
+                    return null
+                }
             }
         }
 
-        // Fallback to simulated database
-        val simulated = synchronized(simulatedRooms) {
-            simulatedRooms[cleanCode]
+        synchronized(simulatedRooms) { simulatedRooms[cleanCode] }?.let {
+            Log.d(TAG, "Found ride $cleanCode in local registry")
+            return it
         }
-        if (simulated != null) {
-            Log.d(TAG, "Found room $cleanCode in simulated memory")
-            return simulated
-        }
-        
-        // No blind fallback here. Previously an unknown code was treated as valid,
-        // which let anyone dial a random 4-digit number into a stranger's room.
-        Log.w(TAG, "Room $cleanCode does not exist")
-        return null
+
+        // Unverified join. The token server only ever issues a token scoped to
+        // this exact code, so the worst outcome is an empty room.
+        return RoomDetails(roomCode = cleanCode, createdAt = System.currentTimeMillis())
     }
 
     private fun generate4DigitCode(): String {

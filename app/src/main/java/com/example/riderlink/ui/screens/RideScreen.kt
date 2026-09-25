@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import com.example.riderlink.audio.TrackInfo
 import com.example.riderlink.domain.model.AudioRoute
 import com.example.riderlink.domain.model.ConnectionStatus
 import com.example.riderlink.domain.model.Rider
@@ -42,6 +43,7 @@ import com.example.riderlink.theme.Surface1
 import com.example.riderlink.theme.TextMuted
 import com.example.riderlink.theme.TextSecondary
 import com.example.riderlink.ui.components.MicButton
+import com.example.riderlink.ui.components.NowPlayingStrip
 import com.example.riderlink.ui.components.RiderRow
 import com.example.riderlink.ui.components.SecondaryAction
 import com.example.riderlink.ui.components.SectionLabel
@@ -65,11 +67,15 @@ fun RideScreen(
     reconnectAttempt: Int,
     audioRoute: AudioRoute,
     privateChatWith: String?,
+    localTrack: TrackInfo?,
+    sharedTrack: TrackInfo?,
     error: String?,
     onDismissError: () -> Unit,
     onToggleMute: () -> Unit,
     onSelectRider: (Rider) -> Unit,
     onReturnToGroup: () -> Unit,
+    onShareTrack: () -> Unit,
+    onDismissSharedTrack: () -> Unit,
     onLeaveRide: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -133,7 +139,16 @@ fun RideScreen(
                 )
             }
 
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
+
+            NowPlayingStrip(
+                localTrack = localTrack,
+                sharedTrack = sharedTrack,
+                onShare = onShareTrack,
+                onDismissShared = onDismissSharedTrack,
+            )
+
+            Spacer(Modifier.height(14.dp))
 
             RiderPanel(
                 riders = riders,

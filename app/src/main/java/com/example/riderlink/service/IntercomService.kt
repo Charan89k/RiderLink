@@ -163,7 +163,7 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
         // Listen to client connection, mute states, and speaking states to update notifications and audio focus
         serviceScope.launch {
             launch {
-                intercomClient.connectionState.collect {
+                intercomClient.connectionStatus.collect {
                     updateNotification()
                 }
             }
@@ -316,6 +316,9 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
             Log.e(TAG, "Giving up after ${ReconnectPolicy.MAX_ATTEMPTS} attempts")
             _sessionError.value = "Could not restore the ride. Check your signal and rejoin."
             _reconnectAttempt.value = 0
+            // Stop pinning the CPU awake for a session that is not coming back.
+            // The notification stays so the rider finds out why they went quiet.
+            releaseWakeLock()
             updateNotification()
         }
     }
@@ -328,7 +331,8 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
 
     /** Turns an exception into something worth showing a rider at 80km/h. */
     private fun friendlyError(error: Throwable): String = when {
-        error is java.net.UnknownHostException -> "No internet connection."
+        // Covers both a dead radio and a token server URL that does not resolve.
+        error is java.net.UnknownHostException -> "Could not reach the token server. Check your connection."
         error is java.net.SocketTimeoutException -> "The token server did not respond."
         error.message?.contains("Token server returned 4") == true -> "This ride code was rejected."
         else -> "Could not join the ride. Please try again."
@@ -377,7 +381,9 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RiderLink::IntercomCpuWakeLock").apply {
                 setReferenceCounted(false)
-                acquire(10 * 60 * 60 * 1000L) // 10 hours max hold
+                // Safety net only: the lock is released on disconnect and when
+                // reconnection is abandoned. Long enough to outlast a full day's ride.
+                acquire(WAKELOCK_TIMEOUT_MS)
             }
             Log.d(TAG, "WakeLock acquired")
         }
@@ -688,6 +694,7 @@ class IntercomService : Service(), TextToSpeech.OnInitListener {
     }
 
     companion object {
+        private const val WAKELOCK_TIMEOUT_MS = 12 * 60 * 60 * 1000L
         private const val TAG = "IntercomService"
         const val CHANNEL_ID = "riderlink_intercom_channel"
         const val NOTIFICATION_ID = 1001
