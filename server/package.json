@@ -1,0 +1,15 @@
+{
+  "name": "riderlink-token-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mints short-lived, room-scoped LiveKit tokens for the RiderLink Android app",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

@@ -1,0 +1,37 @@
+rules_version = '2';
+
+// RiderLink Firestore rules.
+//
+// A room document is nothing more than proof that a 4-digit code is in use. It
+// holds no credentials, so the worst a reader learns is whether a code exists.
+// Access to the actual voice room is granted by the token server, not by these
+// documents.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isRoomCode(code) {
+      return code is string && code.matches('^[0-9]{4}$');
+    }
+
+    match /rooms/{roomCode} {
+      // A rider joining a room looks up exactly one code at a time.
+      allow get: if isRoomCode(roomCode);
+
+      // Never allow listing: otherwise anyone could dump every active room.
+      allow list: if false;
+
+      allow create: if isRoomCode(roomCode)
+                    && request.resource.data.keys().hasOnly(['roomCode', 'createdAt'])
+                    && request.resource.data.roomCode == roomCode
+                    && request.resource.data.createdAt is number;
+
+      // Rooms are immutable once created; expiry belongs in a scheduled cleanup.
+      allow update, delete: if false;
+    }
+
+    // Everything else is closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

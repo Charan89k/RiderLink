@@ -8,18 +8,19 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.random.Random
-import com.example.riderlink.Config
 
+/**
+ * A room record. Deliberately carries no LiveKit credentials: the document only
+ * proves that a 4-digit code maps to a real room, and access tokens are minted
+ * by the token server.
+ */
 data class RoomDetails(
     val roomCode: String = "",
-    val livekitUrl: String = "",
-    val livekitApiKey: String = "",
-    val livekitApiSecret: String = "",
     val createdAt: Long = 0
 )
 
 interface RoomRepository {
-    suspend fun createRoom(livekitUrl: String, apiKey: String, apiSecret: String): RoomDetails
+    suspend fun createRoom(): RoomDetails
     suspend fun joinRoom(roomCode: String): RoomDetails?
 }
 
@@ -58,13 +59,10 @@ class FirebaseRoomRepository(private val context: Context) : RoomRepository {
         private val simulatedRooms = mutableMapOf<String, RoomDetails>()
     }
 
-    override suspend fun createRoom(livekitUrl: String, apiKey: String, apiSecret: String): RoomDetails {
+    override suspend fun createRoom(): RoomDetails {
         val code = generate4DigitCode()
         val roomDetails = RoomDetails(
             roomCode = code,
-            livekitUrl = livekitUrl,
-            livekitApiKey = apiKey,
-            livekitApiSecret = apiSecret,
             createdAt = System.currentTimeMillis()
         )
 
@@ -138,14 +136,10 @@ class FirebaseRoomRepository(private val context: Context) : RoomRepository {
             return simulated
         }
         
-        Log.d(TAG, "Bypassing room lookup: Directly connecting to room $cleanCode via Config defaults")
-        return RoomDetails(
-            roomCode = cleanCode,
-            livekitUrl = Config.DEFAULT_LIVEKIT_URL,
-            livekitApiKey = Config.DEFAULT_LIVEKIT_API_KEY,
-            livekitApiSecret = Config.DEFAULT_LIVEKIT_API_SECRET,
-            createdAt = System.currentTimeMillis()
-        )
+        // No blind fallback here. Previously an unknown code was treated as valid,
+        // which let anyone dial a random 4-digit number into a stranger's room.
+        Log.w(TAG, "Room $cleanCode does not exist")
+        return null
     }
 
     private fun generate4DigitCode(): String {

@@ -261,9 +261,7 @@ fun HomeScreen(
     onRequestPermissions: () -> Unit
 ) {
     val riderName by mainViewModel.riderName.collectAsStateWithLifecycle()
-    val livekitUrl by mainViewModel.livekitUrl.collectAsStateWithLifecycle()
-    val apiKey by mainViewModel.apiKey.collectAsStateWithLifecycle()
-    val apiSecret by mainViewModel.apiSecret.collectAsStateWithLifecycle()
+    val tokenServerUrl by mainViewModel.tokenServerUrl.collectAsStateWithLifecycle()
 
     var joinCodeInput by remember { mutableStateOf("") }
     var isAdvancedExpanded by remember { mutableStateOf(false) }
@@ -448,7 +446,7 @@ fun HomeScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Advanced LiveKit Credentials",
+                            text = "Advanced Connection Settings",
                             color = Color.White.copy(alpha = 0.6f),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
@@ -466,9 +464,10 @@ fun HomeScreen(
                             modifier = Modifier.padding(top = 10.dp)
                         ) {
                             OutlinedTextField(
-                                value = livekitUrl,
-                                onValueChange = { mainViewModel.livekitUrl.value = it },
-                                label = { Text("Server URL", fontSize = 12.sp) },
+                                value = tokenServerUrl,
+                                onValueChange = { mainViewModel.tokenServerUrl.value = it },
+                                label = { Text("Token Server URL", fontSize = 12.sp) },
+                                singleLine = true,
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = AccentBlue.copy(alpha = 0.8f),
                                     unfocusedBorderColor = BorderGrey,
@@ -480,35 +479,10 @@ fun HomeScreen(
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.fillMaxWidth()
                             )
-                            OutlinedTextField(
-                                value = apiKey,
-                                onValueChange = { mainViewModel.apiKey.value = it },
-                                label = { Text("API Key", fontSize = 12.sp) },
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AccentBlue.copy(alpha = 0.8f),
-                                    unfocusedBorderColor = BorderGrey,
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
-                                    focusedLabelColor = AccentBlue,
-                                    unfocusedLabelColor = MutedText
-                                ),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            OutlinedTextField(
-                                value = apiSecret,
-                                onValueChange = { mainViewModel.apiSecret.value = it },
-                                label = { Text("API Secret", fontSize = 12.sp) },
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AccentBlue.copy(alpha = 0.8f),
-                                    unfocusedBorderColor = BorderGrey,
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
-                                    focusedLabelColor = AccentBlue,
-                                    unfocusedLabelColor = MutedText
-                                ),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth()
+                            Text(
+                                text = "Issues short-lived access tokens. RiderLink stores no LiveKit keys on your phone.",
+                                color = MutedText,
+                                fontSize = 11.sp
                             )
                         }
                     }

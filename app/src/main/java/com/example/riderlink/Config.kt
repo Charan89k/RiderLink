@@ -2,12 +2,14 @@ package com.example.riderlink
 
 object Config {
     // =========================================================================
-    // LiveKit Server Credentials Configuration
+    // Token server configuration
     // =========================================================================
-    // Replace these values with your actual LiveKit Server URL, API Key, and API Secret.
-    // Once compiled, all installed versions of this APK will connect to this server by default.
-    
-    const val DEFAULT_LIVEKIT_URL = "wss://riderlink-chz64zwd.livekit.cloud"
-    const val DEFAULT_LIVEKIT_API_KEY = "APIvgvmMHZ4QxcZ"
-    const val DEFAULT_LIVEKIT_API_SECRET = "uZSeGrp03mdJGDtdx5KiGfJy8rDklpLILMmycwQfsQHA"
+    // The app holds no LiveKit credentials. It asks the token server below for a
+    // short-lived, room-scoped access token, and the server replies with both the
+    // token and the LiveKit URL to connect to. The API secret lives only in the
+    // server's environment -- see server/README.md.
+    //
+    // Replace this with your own deployed Worker URL.
+
+    const val DEFAULT_TOKEN_SERVER_URL = "https://riderlink-token.workers.dev"
 }

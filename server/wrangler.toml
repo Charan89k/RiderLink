@@ -1,0 +1,13 @@
+name = "riderlink-token"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+# Not a secret: this is the address riders connect to. The token is what
+# authorises the connection.
+LIVEKIT_URL = "wss://riderlink-chz64zwd.livekit.cloud"
+
+# LIVEKIT_API_KEY and LIVEKIT_API_SECRET are NOT set here on purpose.
+# Set them once with:
+#   wrangler secret put LIVEKIT_API_KEY
+#   wrangler secret put LIVEKIT_API_SECRET

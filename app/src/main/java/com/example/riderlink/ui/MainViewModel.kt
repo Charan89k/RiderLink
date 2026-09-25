@@ -10,7 +10,7 @@ import android.media.AudioManager
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.riderlink.audio.TokenGenerator
+import com.example.riderlink.audio.TokenService
 import com.example.riderlink.audio.TrackInfo
 import com.example.riderlink.firebase.FirebaseRoomRepository
 import com.example.riderlink.firebase.RoomDetails
@@ -36,10 +36,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val prefs = context.getSharedPreferences("riderlink_settings", Context.MODE_PRIVATE)
 
-    // Configuration states
-    val livekitUrl = MutableStateFlow(Config.DEFAULT_LIVEKIT_URL)
-    val apiKey = MutableStateFlow(Config.DEFAULT_LIVEKIT_API_KEY)
-    val apiSecret = MutableStateFlow(Config.DEFAULT_LIVEKIT_API_SECRET)
+    // Configuration states. The LiveKit URL is no longer configured here: the
+    // token server returns it alongside each token, so there is one source of truth.
+    val tokenServerUrl = MutableStateFlow(Config.DEFAULT_TOKEN_SERVER_URL)
     val riderName = MutableStateFlow("Rider-${Random.nextInt(100, 1000)}")
 
     // Service binding state
@@ -243,17 +242,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _error.value = null
             try {
                 // 1. Create Room document in Firebase/Simulation
-                val roomDetails = roomRepository.createRoom(
-                    livekitUrl = livekitUrl.value,
-                    apiKey = apiKey.value,
-                    apiSecret = apiSecret.value
-                )
+                val roomDetails = roomRepository.createRoom()
 
-                // 2. Generate a connection token for host
-                val token = TokenGenerator.generateToken(
-                    apiKey = roomDetails.livekitApiKey,
-                    apiSecret = roomDetails.livekitApiSecret,
-                    roomName = roomDetails.roomCode,
+                // 2. Ask the token server for a room-scoped token
+                val credentials = TokenService.fetchCredentials(
+                    tokenServerUrl = tokenServerUrl.value,
+                    roomCode = roomDetails.roomCode,
                     identity = riderName.value
                 )
 
@@ -261,7 +255,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startServiceForeground(roomDetails.roomCode)
 
                 // 4. Connect to Room
-                connectServiceToRoom(roomDetails.livekitUrl, token, roomDetails.roomCode)
+                connectServiceToRoom(credentials.serverUrl, credentials.token, roomDetails.roomCode)
             } catch (e: Exception) {
                 Log.e(TAG, "Error creating room", e)
                 _error.value = "Failed to create room: ${e.message}"
@@ -287,11 +281,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                // 2. Generate connection token for joining participant
-                val token = TokenGenerator.generateToken(
-                    apiKey = roomDetails.livekitApiKey,
-                    apiSecret = roomDetails.livekitApiSecret,
-                    roomName = roomDetails.roomCode,
+                // 2. Ask the token server for a room-scoped token
+                val credentials = TokenService.fetchCredentials(
+                    tokenServerUrl = tokenServerUrl.value,
+                    roomCode = roomDetails.roomCode,
                     identity = riderName.value
                 )
 
@@ -299,7 +292,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startServiceForeground(roomDetails.roomCode)
 
                 // 4. Connect to Room
-                connectServiceToRoom(roomDetails.livekitUrl, token, roomDetails.roomCode)
+                connectServiceToRoom(credentials.serverUrl, credentials.token, roomDetails.roomCode)
             } catch (e: Exception) {
                 Log.e(TAG, "Error joining room", e)
                 _error.value = "Failed to join room: ${e.message}"

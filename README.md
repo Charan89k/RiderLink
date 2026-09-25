@@ -25,9 +25,9 @@ Instead of buying expensive, proprietary mesh communication hardware (like Sena 
 * **Language:** Kotlin (built on top of asynchronous Coroutines & Flows)
 * **UI Framework:** Jetpack Compose & Material 3
 * **Real-Time Communications:** LiveKit Android SDK (WebRTC framework)
-* **Database & Orchestration:** Firebase Core, Auth, and Cloud Firestore (handles 4-digit room code lookups)
+* **Database & Orchestration:** Firebase Core, Auth, and Cloud Firestore (handles 4-digit room code lookups; documents hold no credentials, see `firestore.rules`)
 * **Background Lifecycle:** Persistent Android Foreground Service declared with `FOREGROUND_SERVICE_MICROPHONE` (Target API 34+ compliance) paired with CPU `WakeLocks`.
-* **Token Framework:** Embedded local HMAC-SHA256 JWT generation framework for rapid standalone staging and offline simulation.
+* **Token Framework:** A Cloudflare Worker (`server/`) mints short-lived, room-scoped LiveKit tokens. The LiveKit API secret lives only in the Worker's environment and is never present in the APK or the database.
 
 ---
 
@@ -39,6 +39,11 @@ Instead of buying expensive, proprietary mesh communication hardware (like Sena 
 - Min SDK 26 (Android 8.0+)
 
 ### Setup Instructions
+
+0. **Deploy the token server first.** The app cannot connect without one --
+   it holds no LiveKit credentials of its own. See [`server/README.md`](server/README.md),
+   then set `DEFAULT_TOKEN_SERVER_URL` in `app/src/main/java/com/example/riderlink/Config.kt`.
+
 
 1. **Clone the Repository:**
    ```bash
