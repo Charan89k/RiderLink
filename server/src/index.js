@@ -12,7 +12,11 @@
  *   LIVEKIT_URL
  */
 
-const TOKEN_TTL_SECONDS = 60 * 60; // 1 hour; the SDK reconnects with a fresh token
+// Long enough to outlast a full day's ride: LiveKit needs a still-valid token to
+// re-establish a dropped connection, and a rider losing the intercom mid-ride
+// because their token expired is worse than the marginal risk of a longer TTL.
+// Shorten this once the app refreshes its token on reconnect.
+const TOKEN_TTL_SECONDS = 12 * 60 * 60; // 12 hours
 const ROOM_CODE_PATTERN = /^[0-9]{4}$/;
 const MAX_IDENTITY_LENGTH = 64;
 

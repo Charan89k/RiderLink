@@ -47,11 +47,12 @@ test("mints a room-scoped token whose signature verifies", async () => {
   }
 });
 
-test("token expires within an hour", async () => {
+test("token outlasts a long ride but is not open-ended", async () => {
   const response = await worker.fetch(tokenRequest({ room: "0001", identity: "r" }), ENV);
   const { expiresAt } = await response.json();
   const ttl = expiresAt - Math.floor(Date.now() / 1000);
-  assert.ok(ttl > 0 && ttl <= 3600, `ttl was ${ttl}`);
+  assert.ok(ttl >= 8 * 3600, `ttl of ${ttl}s is too short to survive a day's ride`);
+  assert.ok(ttl <= 12 * 3600, `ttl was ${ttl}`);
 });
 
 test("rejects room codes that are not 4 digits", async () => {

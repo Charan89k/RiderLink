@@ -8,7 +8,7 @@ LiveKit access tokens are JWTs signed with your LiveKit **API secret**. Signing
 them inside the Android app means shipping that secret in every APK, where
 anyone can read it out and mint admin tokens for your LiveKit project. This
 Worker keeps the secret server-side; the app only ever receives a finished
-token that is good for one room, for one hour.
+token that is good for one room, for one riding day.
 
 ## Deploy
 
@@ -56,7 +56,7 @@ npm run dev
 ```
 
 `room` must be exactly 4 digits; `identity` must be 1-64 characters. The token
-carries `roomJoin`, `canPublish`, `canSubscribe` and `canPublishData` for that
+is valid for 12 hours and carries `roomJoin`, `canPublish`, `canSubscribe` and `canPublishData` for that
 one room, and no administrative grants.
 
 ### `GET /health`
@@ -72,7 +72,7 @@ npm test
 ```
 
 The suite re-signs each minted token with Node's own HMAC implementation and
-checks that the signatures match, that the TTL is within an hour, that
+checks that the signatures match, that the TTL is bounded, that
 administrative grants are absent, that malformed input is rejected, and that a
 missing secret produces a 500 rather than an unsigned token.
 

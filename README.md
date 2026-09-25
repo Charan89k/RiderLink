@@ -27,7 +27,7 @@ Instead of buying expensive, proprietary mesh communication hardware (like Sena 
 * **Real-Time Communications:** LiveKit Android SDK (WebRTC framework)
 * **Database & Orchestration:** Firebase Core, Auth, and Cloud Firestore (handles 4-digit room code lookups; documents hold no credentials, see `firestore.rules`)
 * **Background Lifecycle:** Persistent Android Foreground Service declared with `FOREGROUND_SERVICE_MICROPHONE` (Target API 34+ compliance) paired with CPU `WakeLocks`.
-* **Token Framework:** A Cloudflare Worker (`server/`) mints short-lived, room-scoped LiveKit tokens. The LiveKit API secret lives only in the Worker's environment and is never present in the APK or the database.
+* **Token Framework:** A Cloudflare Worker (`server/`) mints room-scoped LiveKit tokens. The LiveKit API secret lives only in the Worker's environment and is never present in the APK or the database.
 
 ---
 
